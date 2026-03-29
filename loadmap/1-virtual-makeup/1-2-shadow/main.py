@@ -73,23 +73,25 @@ def apply_shadow(
     intensity: float = 0.08,
     blur_scale: float = 3.0,
 ) -> np.ndarray:
-    """指定メッシュ領域にシャドウを適用 (中心が暗く端が滑らかにフェード)"""
+    """指定メッシュ領域にシャドウを適用 (外側が濃く内側に向かって馴染む)"""
     h, w = image.shape[:2]
 
     # 1. メッシュ三角形でマスク作成
     mask = fm.build_mask(mesh_ids, w, h)
 
-    # 2. 距離変換: 端からの距離 → 中心ほど値が大きい
+    # 2. 距離変換: 端からの距離 → 反転して外側ほど値が大きい
     mask_u8 = (mask * 255).astype(np.uint8)
     dist = cv2.distanceTransform(mask_u8, cv2.DIST_L2, 5)
     mx = dist.max()
     if mx > 0:
         dist = dist / mx
+    # 反転: 外側(輪郭側)が濃く、内側に向かってフェード
+    dist = (1.0 - dist) * mask
 
-    # 3. べき乗カーブで滑らかなグラデーション (端の減衰をより緩やかに)
-    dist = np.power(dist, 0.5)
+    # 3. べき乗カーブで内側への減衰を緩やかに
+    dist = np.power(dist, 1.5)
 
-    # 4. 2段階ブラー (内側の滑らかさ + 外側への自然なフェード)
+    # 4. 2段階ブラー (内側への自然なフェード)
     face_h = np.linalg.norm(
         fm.landmarks_px[10].astype(float) - fm.landmarks_px[152].astype(float)
     )
