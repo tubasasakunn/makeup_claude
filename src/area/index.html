@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Face Mesh Area Selector</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;700&display=swap" rel="stylesheet">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: 'Noto Sans JP', sans-serif;
+      background: #0a0a0f;
+      color: #e0e0e0;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    /* Toolbar */
+    #toolbar {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      padding: 12px 20px;
+      background: rgba(20, 20, 30, 0.95);
+      border-bottom: 1px solid rgba(255,255,255,0.08);
+      backdrop-filter: blur(20px);
+    }
+    #toolbar h1 {
+      font-size: 16px;
+      font-weight: 700;
+      color: #fff;
+      margin-right: auto;
+    }
+    #imageInput { display: none; }
+    .btn {
+      padding: 8px 16px;
+      border: 1px solid rgba(255,255,255,0.15);
+      border-radius: 8px;
+      background: rgba(255,255,255,0.06);
+      color: #e0e0e0;
+      font-size: 13px;
+      cursor: pointer;
+      transition: all 0.2s;
+      font-family: inherit;
+    }
+    .btn:hover {
+      background: rgba(255,255,255,0.12);
+      border-color: rgba(255,255,255,0.25);
+    }
+    .btn-primary {
+      background: rgba(99, 102, 241, 0.3);
+      border-color: rgba(99, 102, 241, 0.5);
+    }
+    .btn-primary:hover { background: rgba(99, 102, 241, 0.5); }
+    .btn-danger {
+      background: rgba(239, 68, 68, 0.2);
+      border-color: rgba(239, 68, 68, 0.4);
+    }
+    .btn-danger:hover { background: rgba(239, 68, 68, 0.4); }
+    #status { font-size: 13px; color: #888; }
+    #status.loading { color: #f59e0b; }
+    #status.ready { color: #10b981; }
+    .toggle-label {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 13px;
+      cursor: pointer;
+      user-select: none;
+    }
+    .toggle-label input[type="checkbox"] { accent-color: #6366f1; }
+
+    /* Main Layout */
+    #main {
+      flex: 1;
+      display: flex;
+      overflow: hidden;
+    }
+
+    /* Canvas Area */
+    #canvas-area {
+      flex: 1;
+      position: relative;
+      overflow: hidden;
+      background: #08080c;
+    }
+    #canvas-container {
+      position: absolute;
+      transform-origin: 0 0;
+      will-change: transform;
+    }
+    #mainCanvas {
+      display: block;
+      cursor: crosshair;
+    }
+    #canvas-area.panning, #canvas-area.panning #mainCanvas {
+      cursor: grabbing;
+    }
+    #zoomInfo {
+      position: absolute;
+      bottom: 12px;
+      left: 12px;
+      font-size: 11px;
+      color: #666;
+      pointer-events: none;
+      z-index: 5;
+    }
+
+    /* Drop zone */
+    #dropZone {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      background: rgba(8, 8, 12, 0.92);
+      z-index: 10;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+    #dropZone:hover { background: rgba(8, 8, 12, 0.8); }
+    #dropZone.hidden { display: none; }
+    #dropZone .icon { font-size: 64px; margin-bottom: 16px; opacity: 0.5; }
+    #dropZone p { font-size: 16px; color: #888; }
+
+    /* Toast */
+    #toast {
+      position: fixed;
+      bottom: 24px;
+      left: 50%;
+      transform: translateX(-50%) translateY(20px);
+      padding: 8px 20px;
+      background: rgba(16, 185, 129, 0.9);
+      color: #fff;
+      font-size: 13px;
+      border-radius: 8px;
+      pointer-events: none;
+      z-index: 100;
+      opacity: 0;
+      transition: opacity 0.2s, transform 0.2s;
+    }
+    #toast.show {
+      opacity: 1;
+      transform: translateX(-50%) translateY(0);
+    }
+
+    /* Sidebar */
+    #sidebar {
+      width: 300px;
+      background: rgba(16, 16, 24, 0.98);
+      border-left: 1px solid rgba(255,255,255,0.08);
+      display: flex;
+      flex-direction: column;
+      backdrop-filter: blur(20px);
+    }
+    #sidebar-header {
+      padding: 14px 16px;
+      border-bottom: 1px solid rgba(255,255,255,0.08);
+    }
+    #sidebar-header h2 { font-size: 14px; font-weight: 600; margin-bottom: 8px; }
+    .stats { font-size: 12px; color: #888; }
+    .stats .count { color: #ec4899; font-weight: 600; }
+    #searchBox {
+      width: 100%;
+      padding: 8px 12px;
+      margin-top: 10px;
+      border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 6px;
+      background: rgba(255,255,255,0.04);
+      color: #e0e0e0;
+      font-size: 13px;
+      font-family: inherit;
+      outline: none;
+    }
+    #searchBox:focus { border-color: rgba(99, 102, 241, 0.5); }
+    #meshList {
+      flex: 1;
+      overflow-y: auto;
+      padding: 6px;
+    }
+    .mesh-item {
+      display: flex;
+      align-items: center;
+      padding: 5px 10px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 12px;
+      font-family: 'SF Mono', 'Fira Code', monospace;
+      transition: background 0.12s;
+      gap: 8px;
+    }
+    .mesh-item:hover { background: rgba(255,255,255,0.06); }
+    .mesh-item.selected {
+      background: rgba(236, 72, 153, 0.15);
+      color: #ec4899;
+    }
+    .mesh-item .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      border: 1.5px solid rgba(255,255,255,0.2);
+      flex-shrink: 0;
+    }
+    .mesh-item.selected .dot {
+      background: #ec4899;
+      border-color: #ec4899;
+    }
+    .mesh-item .vertices {
+      color: #555;
+      font-size: 10px;
+      margin-left: auto;
+    }
+
+    /* Scrollbar */
+    #meshList::-webkit-scrollbar { width: 6px; }
+    #meshList::-webkit-scrollbar-track { background: transparent; }
+    #meshList::-webkit-scrollbar-thumb {
+      background: rgba(255,255,255,0.1);
+      border-radius: 3px;
+    }
+    #meshList::-webkit-scrollbar-thumb:hover {
+      background: rgba(255,255,255,0.2);
+    }
+  </style>
+</head>
+<body>
+  <div id="toolbar">
+    <h1>Face Mesh Selector</h1>
+    <label class="btn btn-primary" for="imageInput">画像を選択</label>
+    <input type="file" id="imageInput" accept="image/*">
+    <label class="toggle-label">
+      <input type="checkbox" id="showIds"> ID表示
+    </label>
+    <button class="btn" id="mirrorBtn" style="background:rgba(245,158,11,0.25);border-color:rgba(245,158,11,0.5);">左右反転選択</button>
+    <button class="btn" id="copyBtn" style="background:rgba(99,102,241,0.25);border-color:rgba(99,102,241,0.5);">選択をコピー</button>
+    <button class="btn btn-danger" id="clearBtn">選択クリア</button>
+    <span class="zoom-controls" style="display:flex;align-items:center;gap:6px;margin-left:8px;border-left:1px solid rgba(255,255,255,0.1);padding-left:16px;">
+      <span id="zoomLevel" style="font-size:12px;font-family:monospace;color:#aaa;min-width:42px;text-align:center;">100%</span>
+      <button class="btn" id="zoomInBtn" style="padding:4px 10px;" title="ズームイン">+</button>
+      <button class="btn" id="zoomOutBtn" style="padding:4px 10px;" title="ズームアウト">-</button>
+      <button class="btn" id="resetZoomBtn" style="padding:4px 10px;" title="フィットリセット">Fit</button>
+    </span>
+    <span id="status">初期化中...</span>
+  </div>
+
+  <div id="main">
+    <div id="canvas-area">
+      <div id="dropZone">
+        <div class="icon">&#128247;</div>
+        <p>画像をドラッグ＆ドロップ、またはボタンで選択</p>
+      </div>
+      <div id="canvas-container">
+        <canvas id="mainCanvas"></canvas>
+      </div>
+      <div id="zoomInfo">Scroll: ズーム ｜ Alt+ドラッグ: 移動</div>
+    </div>
+
+    <div id="sidebar">
+      <div id="sidebar-header">
+        <h2>メッシュ一覧</h2>
+        <div class="stats">
+          合計: <span id="totalCount">0</span> メッシュ |
+          選択: <span id="selectedCount" class="count">0</span>
+        </div>
+        <div style="display:flex;gap:6px;margin-top:10px;">
+          <input type="text" id="idInput" placeholder="例: 0,3,7,15 or [0,3]" style="flex:1;padding:8px 12px;border:1px solid rgba(255,255,255,0.1);border-radius:6px;background:rgba(255,255,255,0.04);color:#e0e0e0;font-size:13px;font-family:inherit;outline:none;">
+          <button class="btn btn-primary" id="loadIdsBtn" style="padding:6px 12px;white-space:nowrap;">読込</button>
+        </div>
+      </div>
+      <div id="meshList"></div>
+    </div>
+  </div>
+
+  <div id="toast"></div>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>

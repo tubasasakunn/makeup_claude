@@ -3,9 +3,14 @@
 
 化粧反映箇所はあらかじめ作成しておき、色味と強度だけを調整します（強度0でOFF）
 
+反映箇所はメッシュIDで決まる。メッシュIDについてはsrc/areaを参考にする
+
+
 ## 1.1 ハイライト
+参考：https://www.orbis.co.jp/archives/detail/1537/?srsltid=AfmBOor0BykZkwfhRYoEShWXH_ioGE1mOSEOAp7AJ2khUyH5G_jQoBrE
 
 ## 1.2 シャドウ
+参考：https://meeco.mistore.jp/contents/magazine/column/20230510.html
 
 ## 1.3 ベース
 
