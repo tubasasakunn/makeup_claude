@@ -62,7 +62,7 @@ def apply_base(
     image: np.ndarray,
     fm: FaceMesh,
     color_bgr: tuple[int, int, int] = (170, 200, 235),
-    intensity: float = 0.15,
+    intensity: float = 0.30,
     blur_scale: float = 2.5,
 ) -> np.ndarray:
     """顔全体にベースメイクを適用 (顔メッシュ全体をカバー、輪郭で自然にフェード)"""
@@ -111,7 +111,7 @@ def main():
     parser.add_argument("-o", "--output", help="出力画像パス (default: base_result.png)")
     parser.add_argument("--color", nargs=3, type=int, default=[235, 200, 170],
                         metavar=("R", "G", "B"), help="ベース色 (default: 235 200 170)")
-    parser.add_argument("--intensity", type=float, default=0.15, help="強度 0.0-1.0 (default: 0.15)")
+    parser.add_argument("--intensity", type=float, default=0.30, help="強度 0.0-1.0 (default: 0.30)")
     parser.add_argument("--blur", type=float, default=2.5, help="ブラー倍率 (default: 2.5)")
     parser.add_argument("--imgonly", action="store_true", help="結果画像のみ (比較画像なし)")
     args = parser.parse_args()

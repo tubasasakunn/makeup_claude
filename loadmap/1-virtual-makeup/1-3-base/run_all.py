@@ -22,7 +22,7 @@ OUTPUT_DIR = Path(__file__).resolve().parent
 
 def main():
     parser = argparse.ArgumentParser(description="全画像にベースメイク一括適用")
-    parser.add_argument("--intensity", type=float, default=0.15)
+    parser.add_argument("--intensity", type=float, default=0.30)
     parser.add_argument("--blur", type=float, default=2.5)
     parser.add_argument("--color", nargs=3, type=int, default=[235, 200, 170],
                         metavar=("R", "G", "B"))
