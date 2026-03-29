@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+.venv/
+tmp/
+*.egg-info/
+.DS_Store
+loadmap/**/result_*.png
+loadmap/**/highlight_*.png
