@@ -33,7 +33,7 @@ PRESET_MAP = {
 def main():
     parser = argparse.ArgumentParser(description="全画像にシャドウ一括適用")
     parser.add_argument("--intensity", type=float, default=0.15)
-    parser.add_argument("--blur", type=float, default=3.0)
+    parser.add_argument("--blur", type=float, default=1.5)
     parser.add_argument("--color", nargs=3, type=int, default=[139, 90, 43],
                         metavar=("R", "G", "B"))
     parser.add_argument("--outdir", type=str, default=None, help="出力先ディレクトリ")
