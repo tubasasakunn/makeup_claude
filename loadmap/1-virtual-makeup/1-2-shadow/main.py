@@ -70,8 +70,8 @@ def apply_shadow(
     fm: FaceMesh,
     mesh_ids: list[int],
     color_bgr: tuple[int, int, int] = (90, 68, 50),
-    intensity: float = 0.15,
-    blur_scale: float = 2.0,
+    intensity: float = 0.08,
+    blur_scale: float = 3.0,
 ) -> np.ndarray:
     """指定メッシュ領域にシャドウを適用 (中心が暗く端が滑らかにフェード)"""
     h, w = image.shape[:2]
@@ -131,8 +131,8 @@ def main():
     parser.add_argument("--preset", help="プリセット (omonaga/marugao で前方一致フィルタ)")
     parser.add_argument("--color", nargs=3, type=int, default=[139, 90, 43],
                         metavar=("R", "G", "B"), help="シャドウ色 (default: 139 90 43)")
-    parser.add_argument("--intensity", type=float, default=0.15, help="強度 0.0-1.0 (default: 0.15)")
-    parser.add_argument("--blur", type=float, default=2.0, help="ブラー倍率 (default: 2.0)")
+    parser.add_argument("--intensity", type=float, default=0.08, help="強度 0.0-1.0 (default: 0.08)")
+    parser.add_argument("--blur", type=float, default=3.0, help="ブラー倍率 (default: 3.0)")
     parser.add_argument("--list", action="store_true", help="利用可能エリア一覧を表示")
     parser.add_argument("--imgonly", action="store_true", help="結果画像のみ (比較画像なし)")
     args = parser.parse_args()
