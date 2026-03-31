@@ -61,18 +61,20 @@ LEFT_UNDER_EYE = [463, 341, 256, 252, 253, 254, 339, 255]
 
 
 def landmarks_to_points(fm, landmark_ids):
-    """ランドマークIDリストから正規化座標リストを返す"""
+    """ランドマークIDリストから正規化座標リストを返す（x座標昇順でソート）"""
     pts = []
     for lid in landmark_ids:
         if lid < len(fm.points) and lid < 478:
             p = fm.points[lid]
             pts.append((p["x"], p["y"]))
+    # x座標昇順（左→右）にソート
+    pts.sort(key=lambda p: p[0])
     return pts
 
 
 def make_polygon(upper_pts, lower_pts):
-    """上辺と下辺の点列からポリゴンを作成"""
-    # 上辺を左→右、下辺を右→左の順に並べて閉じたポリゴンにする
+    """上辺と下辺の点列からポリゴンを作成（両辺は左→右でソート済み前提）"""
+    # 上辺: 左→右、下辺: 右→左 で閉じたポリゴンにする
     return np.array(upper_pts + lower_pts[::-1], dtype=np.float64)
 
 
