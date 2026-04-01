@@ -44,9 +44,11 @@ RIGHT_EYEBROW_LOWER = [55, 65, 52, 53, 46]
 # アイホール中間ライン（眉下と目の間）
 RIGHT_EYEHOLE_MID = [156, 28, 27, 29, 30, 247]
 
-# --- 左目（eyeliner polyline用） ---
+# --- 左目 ---
 LEFT_EYE_UPPER = [466, 388, 387, 386, 385, 384, 398]
 LEFT_EYE_LOWER = [263, 249, 390, 373, 374, 380, 381, 382, 362]
+LEFT_EYE_CORNER_OUTER = 362
+LEFT_EYE_CORNER_INNER = 263
 
 # 涙袋の下端（目の下のやや下）
 RIGHT_UNDER_EYE = [243, 112, 26, 22, 23, 24, 110, 25]
@@ -135,25 +137,43 @@ def identify_eye_areas(fm, w, h):
     r_eyehole = [m for m in r_eyehole if m not in r_eyeball_meshes]
 
     # === 2. 二重幅（メインカラー） ===
+    # 眼球除外なし（二重幅は目のキワに近いため除外すると削れすぎる）
     r_crease_poly = make_polygon(r_mid, r_eye_upper)
     r_crease = find_meshes_in_polygon(fm, r_crease_poly)
-    r_crease = [m for m in r_crease if m not in r_eyeball_meshes]
 
     # === 3. 目のキワ（アイライン） ===
     # メッシュではなくランドマークに沿ったポリラインで定義
-    # （線状のメイクなのでメッシュ塗りつぶしではなく線＋太さが適切）
-    # 上まぶたライン: RIGHT_EYE_UPPER のランドマーク座標
-    # 下まぶたライン: RIGHT_EYE_LOWER のランドマーク座標
+    # 上下それぞれ目頭側・中央・目尻側に3分割
+    r_upper_pts = landmarks_to_points(fm, RIGHT_EYE_UPPER)
+    r_lower_pts = landmarks_to_points(fm, RIGHT_EYE_LOWER)
+    l_upper_pts = landmarks_to_points(fm, LEFT_EYE_UPPER)
+    l_lower_pts = landmarks_to_points(fm, LEFT_EYE_LOWER)
+
+    def split_into_thirds(pts):
+        """点列を3分割（目頭・中央・目尻）"""
+        n = len(pts)
+        t1 = n // 3
+        t2 = 2 * n // 3
+        return {
+            "inner": pts[:t1 + 1],      # 目頭側（オーバーラップ1点）
+            "center": pts[t1:t2 + 1],   # 中央
+            "outer": pts[t2:],           # 目尻側
+        }
+
     eyeliner_lines = {
         "upper": {
             "right": RIGHT_EYE_UPPER,
             "left": LEFT_EYE_UPPER,
+            "right_parts": split_into_thirds(r_upper_pts),
+            "left_parts": split_into_thirds(l_upper_pts),
         },
         "lower": {
             "right": RIGHT_EYE_LOWER,
             "left": LEFT_EYE_LOWER,
+            "right_parts": split_into_thirds(r_lower_pts),
+            "left_parts": split_into_thirds(l_lower_pts),
         },
-        "thickness": 3,  # ピクセル単位ではなく顔幅に対する相対値で後述
+        "thickness": 3,
     }
 
     # === 4. 涙袋（ハイライト） ===
@@ -175,15 +195,24 @@ def identify_eye_areas(fm, w, h):
             r_outer.append(mid)
 
     # === ミラーで左目を生成（左右完全対称） ===
-    r_eyehole_set = set(r_eyehole)
-    r_crease_set = set(r_crease)
-    r_tear_set = set(r_tear)
-    r_outer_set = set(r_outer)
+    l_eyehole = sorted(fm.find_mirror_meshes(set(r_eyehole)))
+    l_crease = sorted(fm.find_mirror_meshes(set(r_crease)))
+    l_tear = sorted(fm.find_mirror_meshes(set(r_tear)))
 
-    l_eyehole = sorted(fm.find_mirror_meshes(r_eyehole_set))
-    l_crease = sorted(fm.find_mirror_meshes(r_crease_set))
-    l_tear = sorted(fm.find_mirror_meshes(r_tear_set))
-    l_outer = sorted(fm.find_mirror_meshes(r_outer_set))
+    # lower_outer: ミラー後にも目尻側フィルタを適用
+    # （ミラーで目頭側のメッシュが混入する場合があるため）
+    l_outer_candidates = sorted(fm.find_mirror_meshes(set(r_outer)))
+    l_outer_corner_x = fm.points[LEFT_EYE_CORNER_OUTER]["x"]  # 左目の目尻
+    l_inner_corner_x = fm.points[LEFT_EYE_CORNER_INNER]["x"]  # 左目の目頭
+    l_eye_width = abs(l_outer_corner_x - l_inner_corner_x)
+    # 左目: 目尻はx座標が小さい方
+    l_threshold_x = l_outer_corner_x + l_eye_width * 0.4
+    l_outer = []
+    for mid in l_outer_candidates:
+        a, b, c = fm.triangles[mid]
+        cx = (fm.points[a]["x"] + fm.points[b]["x"] + fm.points[c]["x"]) / 3
+        if cx <= l_threshold_x:
+            l_outer.append(mid)
 
     areas["eyeshadow_base"] = sorted(set(r_eyehole) | set(l_eyehole))
     areas["eyeshadow_crease"] = sorted(set(r_crease) | set(l_crease))
@@ -264,23 +293,68 @@ def main():
 
 
 def build_eyeliner_mask(fm, eyeliner_lines, w, h):
-    """ランドマークに沿ったポリラインでアイラインマスクを生成"""
+    """ランドマークに沿ったポリラインでアイラインマスクを生成（外側にオフセット）"""
     mask = np.zeros((h, w), dtype=np.float32)
-    # 顔の幅に対する相対的な太さ
     face_w = abs(fm.landmarks_px[234][0] - fm.landmarks_px[454][0])
     thickness = max(2, int(face_w * 0.012 * eyeliner_lines["thickness"]))
+    # 外側オフセット量（太さの半分＋少し余裕）
+    offset_px = thickness // 2 + 1
 
-    for part in ["upper", "lower"]:
-        for side in ["right", "left"]:
+    # 目の中心を算出（オフセット方向の基準）
+    for side in ["right", "left"]:
+        upper_ids = eyeliner_lines["upper"][side]
+        lower_ids = eyeliner_lines["lower"][side]
+        all_ids = upper_ids + lower_ids
+        eye_center_y = np.mean([fm.points[lid]["y"] * h for lid in all_ids if lid < 478])
+        eye_center_x = np.mean([fm.points[lid]["x"] * w for lid in all_ids if lid < 478])
+
+        for part in ["upper", "lower"]:
             landmark_ids = eyeliner_lines[part][side]
             pts = []
             for lid in landmark_ids:
                 if lid < 478:
                     p = fm.points[lid]
-                    pts.append([int(p["x"] * w), int(p["y"] * h)])
+                    px, py = p["x"] * w, p["y"] * h
+                    # 目の中心から外側にオフセット
+                    dx = px - eye_center_x
+                    dy = py - eye_center_y
+                    dist = max(np.sqrt(dx * dx + dy * dy), 1e-6)
+                    px += dx / dist * offset_px
+                    py += dy / dist * offset_px
+                    pts.append([int(px), int(py)])
             if len(pts) >= 2:
                 pts_arr = np.array(pts, dtype=np.int32)
                 cv2.polylines(mask, [pts_arr], isClosed=False, color=1.0, thickness=thickness)
+    return mask
+
+
+def build_eyeliner_part_mask(fm, eyeliner_lines, w, h, part, section):
+    """eyelinerの特定パーツのマスクを生成（part=upper/lower, section=inner/center/outer）"""
+    mask = np.zeros((h, w), dtype=np.float32)
+    face_w = abs(fm.landmarks_px[234][0] - fm.landmarks_px[454][0])
+    thickness = max(2, int(face_w * 0.012 * eyeliner_lines["thickness"]))
+    offset_px = thickness // 2 + 1
+
+    for side in ["right", "left"]:
+        upper_ids = eyeliner_lines["upper"][side]
+        lower_ids = eyeliner_lines["lower"][side]
+        all_ids = upper_ids + lower_ids
+        eye_center_y = np.mean([fm.points[lid]["y"] * h for lid in all_ids if lid < 478])
+        eye_center_x = np.mean([fm.points[lid]["x"] * w for lid in all_ids if lid < 478])
+
+        part_pts = eyeliner_lines[part][f"{side}_parts"][section]
+        pts = []
+        for (px_n, py_n) in part_pts:
+            px, py = px_n * w, py_n * h
+            dx = px - eye_center_x
+            dy = py - eye_center_y
+            dist = max(np.sqrt(dx * dx + dy * dy), 1e-6)
+            px += dx / dist * offset_px
+            py += dy / dist * offset_px
+            pts.append([int(px), int(py)])
+        if len(pts) >= 2:
+            pts_arr = np.array(pts, dtype=np.int32)
+            cv2.polylines(mask, [pts_arr], isClosed=False, color=1.0, thickness=thickness)
     return mask
 
 
@@ -351,6 +425,42 @@ def generate_guide_images(fm, image, areas, eyeliner_lines):
         out_path = output_dir / f"{name}.png"
         cv2.imwrite(str(out_path), comparison)
         print(f"  ガイド画像: {out_path.name}")
+
+    # --- 1b. eyeliner サブパーツ画像 ---
+    eyeliner_sub_colors = {
+        "upper_inner": (80, 40, 180),
+        "upper_center": (60, 30, 150),
+        "upper_outer": (40, 20, 120),
+        "lower_inner": (120, 60, 200),
+        "lower_center": (100, 50, 180),
+        "lower_outer": (80, 40, 160),
+    }
+    eyeliner_sub_labels = {
+        "upper_inner": "3a. Upper inner",
+        "upper_center": "3b. Upper center",
+        "upper_outer": "3c. Upper outer",
+        "lower_inner": "3d. Lower inner",
+        "lower_center": "3e. Lower center",
+        "lower_outer": "3f. Lower outer",
+    }
+    for part in ["upper", "lower"]:
+        for section in ["inner", "center", "outer"]:
+            sub_name = f"{part}_{section}"
+            color_bgr = eyeliner_sub_colors[sub_name]
+            mask = build_eyeliner_part_mask(fm, eyeliner_lines, w, h, part, section)
+            mask_smooth = cv2.GaussianBlur(mask, (5, 5), 1.5)
+            color_layer = np.zeros_like(image)
+            color_layer[:] = color_bgr
+            alpha = (mask_smooth * 0.6)[..., np.newaxis]
+            overlay = (image.astype(np.float32) * (1 - alpha) + color_layer.astype(np.float32) * alpha)
+            overlay = np.clip(overlay, 0, 255).astype(np.uint8)
+            label_en = eyeliner_sub_labels[sub_name]
+            cv2.putText(overlay, label_en, (w - 380, 30),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+            comparison = np.hstack([image, overlay])
+            out_path = output_dir / f"eyeliner_{sub_name}.png"
+            cv2.imwrite(str(out_path), comparison)
+            print(f"  ガイド画像: {out_path.name}")
 
     # --- 2. 全部位統合画像 ---
     overlay_all = image.copy().astype(np.float32)
