@@ -51,33 +51,33 @@ TARGET_JSON = PROJECT_ROOT / "target.json"
 # ==============================================================
 AREA_DEFAULTS = {
     "eyeshadow_base": {
-        "color_rgb": (210, 170, 140),   # 薄いブラウン/ベージュ
-        "intensity": 0.10,
-        "blur_scale": 2.0,
+        "color_rgb": (190, 145, 120),   # ウォームブラウン
+        "intensity": 0.35,
+        "blur_scale": 0.8,
         "blend": "normal",
     },
     "eyeshadow_crease": {
-        "color_rgb": (160, 100, 70),    # 中間ブラウン
-        "intensity": 0.20,
-        "blur_scale": 1.5,
-        "blend": "multiply",
-    },
-    "eyeliner": {
-        "color_rgb": (50, 30, 20),      # ダークブラウン
-        "intensity": 0.50,
+        "color_rgb": (120, 65, 45),     # ディープブラウン
+        "intensity": 0.40,
         "blur_scale": 0.5,
         "blend": "normal",
     },
+    "eyeliner": {
+        "color_rgb": (35, 20, 10),      # ダークブラウン/ほぼ黒
+        "intensity": 0.55,
+        "blur_scale": 0.3,
+        "blend": "normal",
+    },
     "tear_bag": {
-        "color_rgb": (255, 240, 230),   # 白/ライトピンク
-        "intensity": 0.08,
-        "blur_scale": 2.0,
+        "color_rgb": (255, 230, 215),   # ウォームハイライト
+        "intensity": 0.35,
+        "blur_scale": 0.5,
         "blend": "additive",
     },
     "lower_outer": {
-        "color_rgb": (180, 100, 80),    # バーガンディ/テラコッタ
-        "intensity": 0.15,
-        "blur_scale": 1.5,
+        "color_rgb": (165, 85, 70),     # バーガンディ
+        "intensity": 0.35,
+        "blur_scale": 0.4,
         "blend": "normal",
     },
 }
@@ -183,39 +183,20 @@ def apply_eye_area(
     intensity: float,
     blur_scale: float,
     blend: str,
-    gradient: str = "center",
 ) -> np.ndarray:
     """マスクに対してアイメイクを適用"""
     h, w = image.shape[:2]
 
-    # 距離変換でグラデーション
-    mask_u8 = (mask * 255).astype(np.uint8)
-    dist = cv2.distanceTransform(mask_u8, cv2.DIST_L2, 5)
-    mx = dist.max()
-    if mx > 0:
-        dist = dist / mx
-
-    if gradient == "center":
-        # 中心が濃く端がフェード（ハイライト/ベースカラー向き）
-        dist = np.power(dist, 0.5)
-    elif gradient == "edge":
-        # 端が濃く中心にフェード（シャドウ/クリース向き）
-        dist = (1.0 - dist) * mask
-        dist = np.power(dist, 1.5)
-    elif gradient == "flat":
-        # 均一（アイライナー向き）
-        dist = mask.copy()
-
-    # ブラー
+    # ブラーで境界を柔らかくする（マスクをそのまま使い、エッジだけソフトに）
     face_h = np.linalg.norm(
         fm.landmarks_px[10].astype(float) - fm.landmarks_px[152].astype(float)
     )
     ksize = int(face_h * 0.03 * blur_scale)
-    dist = gaussian_blur_mask(dist, ksize)
+    soft_mask = gaussian_blur_mask(mask, ksize)
 
     # 合成
     blend_func = BLEND_FUNCS[blend]
-    return blend_func(image, dist, color_bgr, intensity)
+    return blend_func(image, soft_mask, color_bgr, intensity)
 
 
 def make_side_by_side(before: np.ndarray, after: np.ndarray) -> np.ndarray:
@@ -328,16 +309,6 @@ def main():
         blur_scale = args.blur if args.blur is not None else defaults["blur_scale"]
         blend = defaults["blend"]
 
-        # グラデーション方式
-        if blend == "multiply":
-            gradient = "edge"
-        elif name == "eyeliner":
-            gradient = "flat"
-        elif blend == "additive":
-            gradient = "center"
-        else:
-            gradient = "center"
-
         if name == "eyeliner":
             if eyeliner_data is None:
                 print(f"  Warning: eyeliner データが target.json にありません, スキップ")
@@ -358,7 +329,6 @@ def main():
             intensity=intensity,
             blur_scale=blur_scale,
             blend=blend,
-            gradient=gradient,
         )
 
     # 出力
