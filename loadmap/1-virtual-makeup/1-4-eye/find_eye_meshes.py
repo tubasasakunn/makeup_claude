@@ -186,8 +186,8 @@ def identify_eye_areas(fm, w, h):
     r_outer_corner_x = fm.points[RIGHT_EYE_CORNER_OUTER]["x"]  # x小
     r_inner_corner_x = fm.points[RIGHT_EYE_CORNER_INNER]["x"]  # x大
     r_eye_width = abs(r_inner_corner_x - r_outer_corner_x)
-    # 目尻側40%: outer_corner_x から内側に40%分まで
-    r_threshold_x = r_outer_corner_x + r_eye_width * 0.4
+    # 目尻側25%: outer_corner_x から内側に25%分まで
+    r_threshold_x = r_outer_corner_x + r_eye_width * 0.25
 
     r_outer = []
     for mid in r_tear:
@@ -218,7 +218,7 @@ def identify_eye_areas(fm, w, h):
     l_outer_corner_x = fm.points[LEFT_EYE_CORNER_OUTER]["x"]  # x大
     l_inner_corner_x = fm.points[LEFT_EYE_CORNER_INNER]["x"]  # x小
     l_eye_width = abs(l_outer_corner_x - l_inner_corner_x)
-    l_threshold_x = l_outer_corner_x - l_eye_width * 0.4
+    l_threshold_x = l_outer_corner_x - l_eye_width * 0.25
     l_outer = [mid for mid in l_outer_candidates
                if (fm.points[fm.triangles[mid][0]]["x"] + fm.points[fm.triangles[mid][1]]["x"] + fm.points[fm.triangles[mid][2]]["x"]) / 3 >= l_threshold_x]
 

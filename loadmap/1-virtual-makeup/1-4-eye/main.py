@@ -67,7 +67,7 @@ AREA_DEFAULTS = {
         "intensity": 0.55,
         "blur_scale": 0.3,
         "blend": "normal",
-        "thickness_scale": 0.5,         # 線を細くする（1/10程度）
+        "thickness_scale": 0.2,         # 線を大幅に細くする
     },
     "tear_bag": {
         "color_rgb": (255, 230, 215),   # ウォームハイライト
