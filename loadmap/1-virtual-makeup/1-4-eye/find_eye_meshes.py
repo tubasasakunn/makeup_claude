@@ -195,24 +195,29 @@ def identify_eye_areas(fm, w, h):
             r_outer.append(mid)
 
     # === ミラーで左目を生成（左右完全対称） ===
-    l_eyehole = sorted(fm.find_mirror_meshes(set(r_eyehole)))
-    l_crease = sorted(fm.find_mirror_meshes(set(r_crease)))
-    l_tear = sorted(fm.find_mirror_meshes(set(r_tear)))
+    # ミラー対応がないメッシュを除外して完全対称にする
+    def symmetric_pair(right_meshes):
+        """右目メッシュからミラーし、ラウンドトリップで対称ペアのみ残す"""
+        r_set = set(right_meshes)
+        l_set = fm.find_mirror_meshes(r_set)
+        # 左→右に戻して、元の右に存在するもののみ残す
+        r_roundtrip = fm.find_mirror_meshes(l_set)
+        r_valid = r_set & r_roundtrip
+        l_valid = fm.find_mirror_meshes(r_valid)
+        return sorted(r_valid), sorted(l_valid)
 
-    # lower_outer: ミラー後にも目尻側フィルタを適用
-    # （ミラーで目頭側のメッシュが混入する場合があるため）
-    l_outer_candidates = sorted(fm.find_mirror_meshes(set(r_outer)))
-    l_outer_corner_x = fm.points[LEFT_EYE_CORNER_OUTER]["x"]  # 左目の目尻
-    l_inner_corner_x = fm.points[LEFT_EYE_CORNER_INNER]["x"]  # 左目の目頭
+    r_eyehole, l_eyehole = symmetric_pair(r_eyehole)
+    r_crease, l_crease = symmetric_pair(r_crease)
+    r_tear, l_tear = symmetric_pair(r_tear)
+
+    # lower_outer: symmetric_pair + ミラー後にも目尻側フィルタを適用
+    r_outer, l_outer_candidates = symmetric_pair(r_outer)
+    l_outer_corner_x = fm.points[LEFT_EYE_CORNER_OUTER]["x"]
+    l_inner_corner_x = fm.points[LEFT_EYE_CORNER_INNER]["x"]
     l_eye_width = abs(l_outer_corner_x - l_inner_corner_x)
-    # 左目: 目尻はx座標が小さい方
     l_threshold_x = l_outer_corner_x + l_eye_width * 0.4
-    l_outer = []
-    for mid in l_outer_candidates:
-        a, b, c = fm.triangles[mid]
-        cx = (fm.points[a]["x"] + fm.points[b]["x"] + fm.points[c]["x"]) / 3
-        if cx <= l_threshold_x:
-            l_outer.append(mid)
+    l_outer = [mid for mid in l_outer_candidates
+               if (fm.points[fm.triangles[mid][0]]["x"] + fm.points[fm.triangles[mid][1]]["x"] + fm.points[fm.triangles[mid][2]]["x"]) / 3 <= l_threshold_x]
 
     areas["eyeshadow_base"] = sorted(set(r_eyehole) | set(l_eyehole))
     areas["eyeshadow_crease"] = sorted(set(r_crease) | set(l_crease))

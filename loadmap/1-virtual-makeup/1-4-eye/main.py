@@ -57,8 +57,8 @@ AREA_DEFAULTS = {
         "blend": "normal",
     },
     "eyeshadow_crease": {
-        "color_rgb": (120, 65, 45),     # ディープブラウン
-        "intensity": 0.40,
+        "color_rgb": (160, 110, 85),    # ライトブラウン（薄め）
+        "intensity": 0.25,
         "blur_scale": 0.5,
         "blend": "normal",
     },
@@ -67,17 +67,18 @@ AREA_DEFAULTS = {
         "intensity": 0.55,
         "blur_scale": 0.3,
         "blend": "normal",
+        "thickness_scale": 0.8,         # 線を細くする
     },
     "tear_bag": {
         "color_rgb": (255, 230, 215),   # ウォームハイライト
-        "intensity": 0.35,
+        "intensity": 0.20,
         "blur_scale": 0.5,
         "blend": "additive",
     },
     "lower_outer": {
-        "color_rgb": (165, 85, 70),     # バーガンディ
-        "intensity": 0.35,
-        "blur_scale": 0.4,
+        "color_rgb": (140, 50, 40),     # 濃いバーガンディ
+        "intensity": 0.60,
+        "blur_scale": 0.15,
         "blend": "normal",
     },
 }
@@ -143,11 +144,11 @@ BLEND_FUNCS = {
 }
 
 
-def build_eyeliner_mask(fm: FaceMesh, eyeliner_data: dict, w: int, h: int) -> np.ndarray:
+def build_eyeliner_mask(fm: FaceMesh, eyeliner_data: dict, w: int, h: int, thickness_scale: float = 1.0) -> np.ndarray:
     """ランドマークに沿ったポリラインでアイラインマスクを生成（外側にオフセット）"""
     mask = np.zeros((h, w), dtype=np.float32)
     face_w = abs(fm.landmarks_px[234][0] - fm.landmarks_px[454][0])
-    thickness = max(2, int(face_w * 0.012 * eyeliner_data["thickness"]))
+    thickness = max(2, int(face_w * 0.012 * eyeliner_data["thickness"] * thickness_scale))
     offset_px = thickness // 2 + 1
 
     for side in ["right", "left"]:
@@ -203,6 +204,34 @@ def make_side_by_side(before: np.ndarray, after: np.ndarray) -> np.ndarray:
     return np.hstack([before, after])
 
 
+def crop_eye_region(image: np.ndarray, fm: FaceMesh, margin_ratio: float = 0.3) -> tuple[np.ndarray, tuple[int, int, int, int]]:
+    """両目周辺をクロップ"""
+    h, w = image.shape[:2]
+    eye_lms = [33, 133, 263, 362, 55, 285, 46, 276, 7, 249, 110, 339]
+    xs = [fm.landmarks_px[l][0] for l in eye_lms]
+    ys = [fm.landmarks_px[l][1] for l in eye_lms]
+    margin = int((max(xs) - min(xs)) * margin_ratio)
+    x1 = max(0, int(min(xs)) - margin)
+    x2 = min(w, int(max(xs)) + margin)
+    y1 = max(0, int(min(ys)) - margin)
+    y2 = min(h, int(max(ys)) + margin)
+    return image[y1:y2, x1:x2], (x1, y1, x2, y2)
+
+
+def make_zoom_comparison(before: np.ndarray, after: np.ndarray, fm: FaceMesh) -> np.ndarray:
+    """目元ズームの比較画像を生成"""
+    crop_before, _ = crop_eye_region(before, fm)
+    crop_after, _ = crop_eye_region(after, fm)
+    # 横幅を揃えてリサイズ
+    target_w = before.shape[1]
+    scale = target_w / (crop_before.shape[1] * 2)
+    new_h = int(crop_before.shape[0] * scale)
+    new_w = int(crop_before.shape[1] * scale)
+    crop_before = cv2.resize(crop_before, (new_w, new_h))
+    crop_after = cv2.resize(crop_after, (new_w, new_h))
+    return np.hstack([crop_before, crop_after])
+
+
 # ==============================================================
 # CLI
 # ==============================================================
@@ -238,6 +267,7 @@ def main():
     parser.add_argument("--blur", type=float, help="ブラー倍率を一括変更")
     parser.add_argument("--list", action="store_true", help="利用可能エリア一覧を表示")
     parser.add_argument("--imgonly", action="store_true", help="結果画像のみ (比較画像なし)")
+    parser.add_argument("--zoom", action="store_true", help="目元ズームの比較画像を出力")
     args = parser.parse_args()
 
     # エリア読み込み
@@ -313,8 +343,9 @@ def main():
             if eyeliner_data is None:
                 print(f"  Warning: eyeliner データが target.json にありません, スキップ")
                 continue
-            mask = build_eyeliner_mask(fm, eyeliner_data, w, h)
-            print(f"  適用: {name} (polyline, intensity={intensity:.2f}, blend={blend})")
+            t_scale = defaults.get("thickness_scale", 1.0)
+            mask = build_eyeliner_mask(fm, eyeliner_data, w, h, thickness_scale=t_scale)
+            print(f"  適用: {name} (polyline, intensity={intensity:.2f}, blend={blend}, thickness_scale={t_scale})")
         elif name in mesh_areas:
             mesh_ids = mesh_areas[name]
             mask = fm.build_mask(mesh_ids, w, h)
@@ -335,6 +366,9 @@ def main():
     out_path = args.output or "eye_result.png"
     if args.imgonly:
         cv2.imwrite(out_path, output)
+    elif args.zoom:
+        comparison = make_zoom_comparison(image, output, fm)
+        cv2.imwrite(out_path, comparison)
     else:
         comparison = make_side_by_side(image, output)
         cv2.imwrite(out_path, comparison)
