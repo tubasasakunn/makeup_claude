@@ -76,9 +76,9 @@ AREA_DEFAULTS = {
         "blend": "additive",
     },
     "lower_outer": {
-        "color_rgb": (140, 50, 40),     # 濃いバーガンディ
-        "intensity": 0.60,
-        "blur_scale": 0.15,
+        "color_rgb": (180, 100, 85),    # ソフトバーガンディ
+        "intensity": 0.18,
+        "blur_scale": 0.3,
         "blend": "normal",
     },
 }
