@@ -35,8 +35,8 @@ RIGHT_EYE_UPPER = [246, 161, 160, 159, 158, 157, 173]   # 上まぶたライン
 RIGHT_EYE_LOWER = [33, 7, 163, 144, 145, 153, 154, 155, 133]  # 下まぶたライン
 RIGHT_EYE_OUTLINE = [33, 246, 161, 160, 159, 158, 157, 173, 133,
                      155, 154, 153, 145, 144, 163, 7]
-RIGHT_EYE_CORNER_OUTER = 133   # 目尻
-RIGHT_EYE_CORNER_INNER = 33    # 目頭
+RIGHT_EYE_CORNER_OUTER = 33    # 目尻（顔の外側）
+RIGHT_EYE_CORNER_INNER = 133   # 目頭（鼻側）
 
 # 右眉（下端ライン = アイホール上端）
 RIGHT_EYEBROW_LOWER = [55, 65, 52, 53, 46]
@@ -47,8 +47,8 @@ RIGHT_EYEHOLE_MID = [156, 28, 27, 29, 30, 247]
 # --- 左目 ---
 LEFT_EYE_UPPER = [466, 388, 387, 386, 385, 384, 398]
 LEFT_EYE_LOWER = [263, 249, 390, 373, 374, 380, 381, 382, 362]
-LEFT_EYE_CORNER_OUTER = 362
-LEFT_EYE_CORNER_INNER = 263
+LEFT_EYE_CORNER_OUTER = 263   # 目尻（顔の外側）
+LEFT_EYE_CORNER_INNER = 362   # 目頭（鼻側）
 
 # 涙袋の下端（目の下のやや下）
 RIGHT_UNDER_EYE = [243, 112, 26, 22, 23, 24, 110, 25]
@@ -182,16 +182,18 @@ def identify_eye_areas(fm, w, h):
     r_tear = [m for m in r_tear if m not in r_eyeball_meshes]
 
     # === 5. 下まぶた目尻1/3（ポイントカラー） ===
-    r_outer_corner_x = fm.points[RIGHT_EYE_CORNER_OUTER]["x"]
-    r_inner_corner_x = fm.points[RIGHT_EYE_CORNER_INNER]["x"]
-    r_eye_width = abs(r_outer_corner_x - r_inner_corner_x)
-    r_threshold_x = r_outer_corner_x - r_eye_width * 0.4
+    # 右目: 目尻(outer)はx小さい側、目頭(inner)はx大きい側
+    r_outer_corner_x = fm.points[RIGHT_EYE_CORNER_OUTER]["x"]  # x小
+    r_inner_corner_x = fm.points[RIGHT_EYE_CORNER_INNER]["x"]  # x大
+    r_eye_width = abs(r_inner_corner_x - r_outer_corner_x)
+    # 目尻側40%: outer_corner_x から内側に40%分まで
+    r_threshold_x = r_outer_corner_x + r_eye_width * 0.4
 
     r_outer = []
     for mid in r_tear:
         a, b, c = fm.triangles[mid]
         cx = (fm.points[a]["x"] + fm.points[b]["x"] + fm.points[c]["x"]) / 3
-        if cx >= r_threshold_x:
+        if cx <= r_threshold_x:
             r_outer.append(mid)
 
     # === ミラーで左目を生成（左右完全対称） ===
@@ -212,12 +214,13 @@ def identify_eye_areas(fm, w, h):
 
     # lower_outer: symmetric_pair + ミラー後にも目尻側フィルタを適用
     r_outer, l_outer_candidates = symmetric_pair(r_outer)
-    l_outer_corner_x = fm.points[LEFT_EYE_CORNER_OUTER]["x"]
-    l_inner_corner_x = fm.points[LEFT_EYE_CORNER_INNER]["x"]
+    # 左目: 目尻(outer)はx大きい側、目頭(inner)はx小さい側
+    l_outer_corner_x = fm.points[LEFT_EYE_CORNER_OUTER]["x"]  # x大
+    l_inner_corner_x = fm.points[LEFT_EYE_CORNER_INNER]["x"]  # x小
     l_eye_width = abs(l_outer_corner_x - l_inner_corner_x)
-    l_threshold_x = l_outer_corner_x + l_eye_width * 0.4
+    l_threshold_x = l_outer_corner_x - l_eye_width * 0.4
     l_outer = [mid for mid in l_outer_candidates
-               if (fm.points[fm.triangles[mid][0]]["x"] + fm.points[fm.triangles[mid][1]]["x"] + fm.points[fm.triangles[mid][2]]["x"]) / 3 <= l_threshold_x]
+               if (fm.points[fm.triangles[mid][0]]["x"] + fm.points[fm.triangles[mid][1]]["x"] + fm.points[fm.triangles[mid][2]]["x"]) / 3 >= l_threshold_x]
 
     areas["eyeshadow_base"] = sorted(set(r_eyehole) | set(l_eyehole))
     areas["eyeshadow_crease"] = sorted(set(r_crease) | set(l_crease))
