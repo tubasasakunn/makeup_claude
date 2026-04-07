@@ -8,7 +8,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 from shared.facemesh import FaceMesh
-from main import load_eyebrow_areas, erase_eyebrows
+from main import erase_eyebrows
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 IMGS_DIR = PROJECT_ROOT / "imgs"
@@ -17,11 +17,6 @@ OUTPUT_DIR = Path(__file__).resolve().parent / "result_images"
 
 def main():
     OUTPUT_DIR.mkdir(exist_ok=True)
-
-    areas = load_eyebrow_areas()
-    if "eyebrow_full" not in areas:
-        print("Error: target.json に eyebrow_full がありません")
-        return
 
     print("FaceMesh 初期化中...")
     fm = FaceMesh(subdivision_level=1)
@@ -44,11 +39,7 @@ def main():
             print(f"  スキップ: 顔未検出")
             continue
 
-        output = erase_eyebrows(
-            image, fm,
-            eyebrow_mesh_ids=areas["eyebrow_full"],
-            skin_mesh_ids=areas.get("eyebrow_skin", []),
-        )
+        output = erase_eyebrows(image, fm)
 
         # 左が元画像、右が眉消し
         comparison = np.hstack([image, output])
