@@ -125,43 +125,42 @@ def _mirror_tile(patch: np.ndarray, target_h: int, target_w: int) -> np.ndarray:
     return np.hstack(cols)[:, :target_w]
 
 
-def _select_clean_patch(image: np.ndarray, x_min: int, x_max: int,
-                        y_above_min: int, y_above_max: int,
-                        patch_h: int, patch_w: int) -> np.ndarray | None:
-    """指定範囲から複数候補パッチをサンプリングし、暗いもの（眉/影）を除外して代表を返す
+def _brighten_dark_pixels(patch: np.ndarray, percentile: float = 70.0) -> np.ndarray:
+    """パッチ内の暗いピクセルを明るい代表色に置き換える
 
     手順:
-    1. 範囲内で複数の候補パッチを取得
-    2. 明度でソートし、暗い下位50%を除外（眉のかけら・影を除外）
-    3. 残った中で中央値明度のパッチを返す（明るすぎず暗すぎない代表）
+    1. パッチの輝度ヒストグラムを取得
+    2. percentile (例:70%) より明るいピクセルだけで「綺麗な肌色」を計算
+    3. 暗いピクセル(下位の暗い側)を、ソフトに代表色へ近づける
+       (完全置換ではなく、暗さに応じて段階的にブレンド)
     """
-    h, w = image.shape[:2]
-    candidates = []
+    patch_f = patch.astype(np.float32)
+    # BGR平均で輝度を取得
+    brightness = patch_f.mean(axis=2)
 
-    y_step = max(2, patch_h // 3)
-    for y_top in range(y_above_min, max(y_above_min + 1, y_above_max - patch_h + 1), y_step):
-        y_bot = y_top + patch_h
-        if y_bot > h:
-            continue
-        x_step = max(3, patch_w // 3)
-        for x_left in range(x_min, max(x_min + 1, x_max - patch_w + 1), x_step):
-            x_right = x_left + patch_w
-            if x_right > w:
-                continue
-            patch = image[y_top:y_bot, x_left:x_right]
-            if patch.shape[0] != patch_h or patch.shape[1] != patch_w:
-                continue
-            brightness = float(patch.mean())
-            candidates.append((brightness, patch))
+    # percentile 以上のピクセルだけで代表色を計算
+    threshold = np.percentile(brightness, percentile)
+    bright_mask = brightness >= threshold
+    if bright_mask.sum() == 0:
+        return patch
 
-    if not candidates:
-        return None
+    bright_pixels = patch_f[bright_mask]
+    bright_color = bright_pixels.mean(axis=0)  # 綺麗な肌の代表色
 
-    # 暗い順にソート、下位50%を除外
-    candidates.sort(key=lambda c: c[0])
-    clean_candidates = candidates[len(candidates) // 2:]
-    # 残った中の中央値明度のパッチを返す
-    return clean_candidates[len(clean_candidates) // 2][1]
+    # 各ピクセルの「暗さ度合い」を計算 (0=明るい代表色 ～ 1=最も暗い)
+    bright_med = float(np.median(brightness[bright_mask]))
+    dark_min = float(brightness.min())
+    if bright_med - dark_min < 1e-3:
+        return patch
+
+    # 暗さ比率: bright_med 以上は0、dark_min 以下は1、中間は線形
+    darkness = np.clip((bright_med - brightness) / (bright_med - dark_min), 0, 1)
+    darkness = darkness ** 1.2  # ガンマで暗いところほど強く補正
+
+    # 暗いピクセルを代表色にブレンド
+    alpha = darkness[..., np.newaxis]
+    result = patch_f * (1 - alpha) + bright_color * alpha
+    return np.clip(result, 0, 255).astype(np.uint8)
 
 
 def _color_match_patch(patch: np.ndarray, target_color: np.ndarray) -> np.ndarray:
@@ -202,32 +201,28 @@ def build_skin_texture_image(image: np.ndarray, brow_mask: np.ndarray,
         bh = y_max - y_min + 1
         bw = x_max - x_min + 1
 
-        # パッチサイズ: 小さめにして額の上の方からも取れるように
-        patch_h = max(4, bh // 2)
-        patch_w = max(8, bw // 3)
+        # パッチサイズ: 眉と同じサイズで一発で取る（タイリング不要）
+        patch_h = bh
+        patch_w = bw
 
-        # サンプリング範囲: 眉骨の暗い影を避けるため、額の上の方まで広く探す
-        # 眉の bh*4 上 ～ bh*1 上 まで（ただし額の上限は超えない）
-        margin_min = max(5, bh)
-        margin_max = max(margin_min + patch_h * 2, bh * 4)
-        y_above_max = y_min - margin_min
-        y_above_min = max(forehead_top_y, y_min - margin_max)
-
-        # x範囲も少し余裕を持たせる
-        x_search_min = max(0, x_min - bw // 4)
-        x_search_max = min(w, x_max + bw // 4 + 1)
-
-        patch = _select_clean_patch(
-            image, x_search_min, x_search_max,
-            y_above_min, y_above_max,
-            patch_h, patch_w,
-        )
-        if patch is None:
+        # 眉のすぐ上から1パッチを取得
+        margin = max(3, bh // 2)
+        patch_bottom = max(0, y_min - margin)
+        patch_top = max(forehead_top_y, patch_bottom - patch_h)
+        if patch_bottom <= patch_top:
             continue
 
-        # 局所的な肌色平均にパッチを色補正
-        # 眉の上下から目標色をサンプリング（中央値）
-        target_above = image[max(0, y_min - bh):y_min,
+        patch_left = max(0, x_min)
+        patch_right = min(w, x_max + 1)
+        patch = image[patch_top:patch_bottom, patch_left:patch_right]
+        if patch.shape[0] == 0 or patch.shape[1] == 0:
+            continue
+
+        # パッチ内の暗いピクセル（影/眉のかけら）を明るい代表色に置換
+        cleaned = _brighten_dark_pixels(patch, percentile=70.0)
+
+        # 局所肌色に色補正（眉の上下の中央値）
+        target_above = image[max(0, y_min - bh // 2):y_min,
                              max(0, x_min + bw // 4):min(w, x_max - bw // 4 + 1)]
         target_below = image[y_max + 1:min(h, y_max + 1 + bh // 2),
                              max(0, x_min + bw // 4):min(w, x_max - bw // 4 + 1)]
@@ -238,10 +233,10 @@ def build_skin_texture_image(image: np.ndarray, brow_mask: np.ndarray,
             target_colors.append(np.median(target_below.reshape(-1, 3), axis=0))
         if target_colors:
             target_color = np.mean(target_colors, axis=0)
-            patch = _color_match_patch(patch, target_color)
+            cleaned = _color_match_patch(cleaned, target_color)
 
-        # 反転タイリングで眉領域と同じサイズに拡張
-        tiled = _mirror_tile(patch, bh, bw)
+        # 反転タイリングで眉領域と同じサイズに拡張（パッチが小さい場合）
+        tiled = _mirror_tile(cleaned, bh, bw)
 
         # 連結成分の形で貼り付け
         comp_local = comp_bool[y_min:y_max + 1, x_min:x_max + 1]
@@ -285,15 +280,17 @@ def erase_eyebrows(
     # 2-3. 明るいパッチを選んで反転タイリングで眉領域を埋める
     skin_filled = build_skin_texture_image(image, brow_mask, forehead_top_y=forehead_top_y)
 
-    # 4. 中央は完全置換、外周のみフェザー
-    # 先に大きく膨張させてからブラーすることで、中央はα=1.0を保ち外周だけソフトに
-    blur_ksize = max(7, int(face_h * 0.04 * blur_scale))
-    feather_dilate = blur_ksize // 2 + 3
+    # 4. 中央は完全置換、外周のみ広めにフェザー
+    # マスクを大きく膨張させてからより強くブラーすることで滑らかな境界に
+    blur_ksize = max(11, int(face_h * 0.06 * blur_scale))
+    feather_dilate = blur_ksize // 2 + 4
     feather_kernel = cv2.getStructuringElement(
         cv2.MORPH_ELLIPSE, (feather_dilate * 2 + 1, feather_dilate * 2 + 1)
     )
     expanded_mask = cv2.dilate(brow_mask, feather_kernel, iterations=1)
+    # 2回ブラーをかけてさらに滑らかに
     soft_mask = gaussian_blur_mask(expanded_mask, blur_ksize)
+    soft_mask = gaussian_blur_mask(soft_mask, blur_ksize)
 
     alpha = soft_mask[..., np.newaxis]
     result = image.astype(np.float32) * (1.0 - alpha) + skin_filled.astype(np.float32) * alpha
