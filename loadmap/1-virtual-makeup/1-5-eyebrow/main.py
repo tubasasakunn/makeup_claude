@@ -125,18 +125,17 @@ def _mirror_tile(patch: np.ndarray, target_h: int, target_w: int) -> np.ndarray:
     return np.hstack(cols)[:, :target_w]
 
 
-def build_skin_texture_image(image: np.ndarray, brow_mask: np.ndarray,
-                             fm: FaceMesh = None) -> np.ndarray:
-    """眉の上の額から綺麗な肌パッチを抽出し、反転タイリングで眉領域を埋める
+def sample_skin_color(image: np.ndarray, brow_mask: np.ndarray) -> np.ndarray:
+    """眉の近くから単一の肌色をサンプリング（左右の眉ごとに別の色）
 
-    パッチは眉のすぐ上から取らず、十分なマージンをあけて綺麗な肌だけを取得する。
+    眉の上(額)と下(まぶた)の両方からサンプリングして平均を取る。
+    眉の真ん中あたりの色味になるので、置き換えても周辺となじむ。
     """
     h, w = image.shape[:2]
     brow_mask_bool = brow_mask > 0.5
-    result = image.copy()
+    color_map = np.zeros_like(image)
 
-    # 連結成分（左右の眉を分ける）
-    mask_u8 = (brow_mask_bool.astype(np.uint8)) * 255
+    mask_u8 = brow_mask_bool.astype(np.uint8) * 255
     num_labels, labels = cv2.connectedComponents(mask_u8)
 
     for label_id in range(1, num_labels):
@@ -150,29 +149,37 @@ def build_skin_texture_image(image: np.ndarray, brow_mask: np.ndarray,
         bh = y_max - y_min + 1
         bw = x_max - x_min + 1
 
-        # 眉のすぐ上にマージンを設けて綺麗な肌パッチをサンプリング
-        # マージン: 眉の高さの半分（最低5px）以上
-        margin = max(5, bh // 2)
-        patch_bottom = y_min - margin
-        patch_top = patch_bottom - bh  # 眉と同じ高さ分
-        if patch_top < 0:
-            patch_top = 0
-            patch_bottom = max(patch_top + 1, patch_bottom)
-
-        patch = image[patch_top:patch_bottom, x_min:x_max + 1]
-        if patch.shape[0] == 0 or patch.shape[1] == 0:
+        # 横方向: 眉の中央寄りだけサンプリング（端は影が入りやすい）
+        sample_left = max(0, x_min + bw // 4)
+        sample_right = min(w, x_max - bw // 4 + 1)
+        if sample_right <= sample_left:
             continue
 
-        # 反転タイリングで眉領域と同じサイズに拡張
-        tiled = _mirror_tile(patch, bh, bw)
+        # 上(額)サンプリング: 眉のすぐ上にマージンを設ける
+        margin_above = max(5, bh)
+        above_bottom = max(0, y_min - margin_above)
+        above_top = max(0, above_bottom - max(5, bh // 2))
+        above_area = image[above_top:above_bottom, sample_left:sample_right]
 
-        # 連結成分の形で貼り付け
-        comp_local = comp_bool[y_min:y_max + 1, x_min:x_max + 1]
-        result_region = result[y_min:y_max + 1, x_min:x_max + 1]
-        result_region[comp_local] = tiled[comp_local]
-        result[y_min:y_max + 1, x_min:x_max + 1] = result_region
+        # 下(まぶた)サンプリング: 眉のすぐ下にマージンを設ける
+        margin_below = max(5, bh // 2)
+        below_top = min(h, y_max + margin_below)
+        below_bottom = min(h, below_top + max(5, bh // 3))
+        below_area = image[below_top:below_bottom, sample_left:sample_right]
 
-    return result
+        # 上下の中央値を取得して平均
+        colors = []
+        if above_area.size > 0:
+            colors.append(np.median(above_area.reshape(-1, 3), axis=0))
+        if below_area.size > 0:
+            colors.append(np.median(below_area.reshape(-1, 3), axis=0))
+        if not colors:
+            continue
+
+        skin_color = np.mean(colors, axis=0).astype(np.uint8)
+        color_map[comp_bool] = skin_color
+
+    return color_map
 
 
 def erase_eyebrows(
@@ -180,13 +187,13 @@ def erase_eyebrows(
     fm: FaceMesh,
     blur_scale: float = 1.0,
 ) -> np.ndarray:
-    """眉を消す
+    """眉を消す（シンプル単一肌色塗りつぶし方式）
 
     手順:
     1. ランドマークからタイトなポリゴンマスクを生成し少し拡張
-    2. 眉の上の綺麗な肌パッチを反転タイリングで眉領域に貼り付け
-    3. cv2.seamlessClone で Poisson 合成して自然になじませる
-    4. 元画像との境界をソフトマスクでなめらかに
+    2. 眉のすぐ上から単一の肌色をサンプリング（中央値）
+    3. その色で眉領域を塗りつぶし
+    4. ソフトマスクで元画像と合成
     """
     h, w = image.shape[:2]
 
@@ -199,40 +206,18 @@ def erase_eyebrows(
     # 1. タイトなポリゴンマスク + 少し拡張
     brow_mask = build_eyebrow_polygon_mask(fm, w, h, expand_px=expand_px)
 
-    # 2. 反転タイリングで眉領域を綺麗な肌パッチで埋める
-    texture_filled = build_skin_texture_image(image, brow_mask, fm)
+    # 2-3. 単一肌色で眉領域を塗りつぶし
+    skin_filled = image.copy()
+    color_map = sample_skin_color(image, brow_mask)
+    brow_mask_bool = brow_mask > 0.5
+    skin_filled[brow_mask_bool] = color_map[brow_mask_bool]
 
-    # 3. seamlessClone で Poisson 合成（周辺の色味・ライティングに自動調整）
-    erode_k = max(2, expand_px // 2)
-    erode_kernel = cv2.getStructuringElement(
-        cv2.MORPH_ELLIPSE, (erode_k * 2 + 1, erode_k * 2 + 1)
-    )
-    seamless_mask = cv2.erode(brow_mask, erode_kernel, iterations=1)
-    seamless_mask_u8 = (seamless_mask * 255).astype(np.uint8)
-
-    num_labels, labels = cv2.connectedComponents(seamless_mask_u8)
-    cloned = image.copy()
-    for label_id in range(1, num_labels):
-        comp_mask = (labels == label_id).astype(np.uint8) * 255
-        ys, xs = np.where(comp_mask > 0)
-        if len(ys) == 0:
-            continue
-        cy = int((ys.min() + ys.max()) / 2)
-        cx = int((xs.min() + xs.max()) / 2)
-        try:
-            cloned = cv2.seamlessClone(
-                texture_filled, cloned, comp_mask, (cx, cy), cv2.NORMAL_CLONE
-            )
-        except cv2.error:
-            alpha = (comp_mask.astype(np.float32) / 255.0)[..., np.newaxis]
-            cloned = (cloned.astype(np.float32) * (1 - alpha) +
-                      texture_filled.astype(np.float32) * alpha).astype(np.uint8)
-
-    # 4. 元画像との境界をソフトに合成
-    blur_ksize = max(5, int(face_h * 0.025 * blur_scale))
+    # 4. ソフトマスクで元画像と合成（境界をなめらかに）
+    # 強めのブラーで境界がフラットに見えないようにする
+    blur_ksize = max(7, int(face_h * 0.05 * blur_scale))
     soft_mask = gaussian_blur_mask(brow_mask, blur_ksize)
     alpha = soft_mask[..., np.newaxis]
-    result = image.astype(np.float32) * (1.0 - alpha) + cloned.astype(np.float32) * alpha
+    result = image.astype(np.float32) * (1.0 - alpha) + skin_filled.astype(np.float32) * alpha
     return np.clip(result, 0, 255).astype(np.uint8)
 
 
