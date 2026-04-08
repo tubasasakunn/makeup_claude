@@ -61,38 +61,12 @@ def gaussian_blur_mask(mask: np.ndarray, ksize: int) -> np.ndarray:
     return cv2.GaussianBlur(mask, (ksize, ksize), ksize / 3.0)
 
 
-def _extend_eyebrow_tail(upper_pts: np.ndarray, lower_pts: np.ndarray,
-                         extension: float = 0.4) -> tuple[np.ndarray, np.ndarray]:
-    """眉尻方向にポイントを延長して、ランドマーク外の毛もカバーする
-
-    上辺・下辺それぞれの外側2点から方向ベクトルを算出し、
-    眉幅の extension 倍だけ延長した点を追加する。
-    """
-    brow_width = np.linalg.norm(upper_pts[0] - upper_pts[-1])
-    ext_len = brow_width * extension
-
-    # 上辺の外端を延長（最初の2点から方向を推定）
-    dir_upper = upper_pts[0] - upper_pts[1]
-    dir_upper = dir_upper / (np.linalg.norm(dir_upper) + 1e-6)
-    ext_upper = upper_pts[0] + dir_upper * ext_len
-
-    # 下辺の外端を延長
-    dir_lower = lower_pts[0] - lower_pts[1]
-    dir_lower = dir_lower / (np.linalg.norm(dir_lower) + 1e-6)
-    ext_lower = lower_pts[0] + dir_lower * ext_len
-
-    upper_ext = np.vstack([[ext_upper], upper_pts])
-    lower_ext = np.vstack([[ext_lower], lower_pts])
-    return upper_ext, lower_ext
-
-
 def build_eyebrow_polygon_mask(fm: FaceMesh, w: int, h: int,
-                               expand_ratio: float = 1.4) -> np.ndarray:
-    """ランドマークから直接スムーズなポリゴンマスクを生成（メッシュ不使用）
+                               expand_px: int = 0) -> np.ndarray:
+    """ランドマークからスムーズなポリゴンマスクを生成
 
-    メッシュ三角形ではなくランドマーク座標からポリゴンを作り、
-    cv2.fillPoly で塗りつぶすのでモザイク状にならない。
-    眉尻方向にポリゴンを延長して、はみ出す毛もカバーする。
+    ランドマーク座標からポリゴンを作り cv2.fillPoly で塗りつぶす。
+    expand_px でポリゴン外周をピクセル単位で拡張（眉尻の毛カバー用）。
     """
     mask = np.zeros((h, w), dtype=np.float32)
 
@@ -100,114 +74,94 @@ def build_eyebrow_polygon_mask(fm: FaceMesh, w: int, h: int,
         (RIGHT_EYEBROW_UPPER, RIGHT_EYEBROW_LOWER),
         (LEFT_EYEBROW_UPPER, LEFT_EYEBROW_LOWER),
     ]:
-        # ランドマークからピクセル座標を取得
         upper_pts = np.array([[fm.points[lid]["x"] * w, fm.points[lid]["y"] * h]
                               for lid in upper_ids], dtype=np.float64)
         lower_pts = np.array([[fm.points[lid]["x"] * w, fm.points[lid]["y"] * h]
                               for lid in lower_ids], dtype=np.float64)
 
-        # 眉尻方向に延長
-        upper_ext, lower_ext = _extend_eyebrow_tail(upper_pts, lower_pts, extension=0.4)
-
         # ポリゴン（上辺→下辺逆順で閉じる）
-        polygon = np.vstack([upper_ext, lower_ext[::-1]])
-        centroid = polygon.mean(axis=0)
-
-        # 重心から均一に拡大（上下左右バランス良く）
-        polygon_expanded = centroid + (polygon - centroid) * expand_ratio
-
-        pts_int = polygon_expanded.astype(np.int32)
+        polygon = np.vstack([upper_pts, lower_pts[::-1]])
+        pts_int = polygon.astype(np.int32)
         cv2.fillPoly(mask, [pts_int], 1.0)
+
+    # dilate でポリゴンを均一に拡張（顔からはみ出さない程度）
+    if expand_px > 0:
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE,
+                                           (expand_px * 2 + 1, expand_px * 2 + 1))
+        mask = cv2.dilate(mask, kernel, iterations=1)
 
     return mask
 
 
-def sample_skin_color_map(image: np.ndarray, fm: FaceMesh,
-                          brow_mask: np.ndarray) -> np.ndarray:
-    """眉領域の各ピクセルに対応する肌色マップを生成（上方向からサンプリング）"""
+def build_skin_color_image(image: np.ndarray, brow_mask: np.ndarray,
+                           sample_offset: int = 25) -> np.ndarray:
+    """眉領域を周辺の肌色で塗りつぶした画像を生成
+
+    各列ごとに眉の上(額)と下(まぶた)の肌色をサンプリングし、
+    上下グラデーションで自然につなぐ。
+    """
     h, w = image.shape[:2]
     brow_mask_bool = brow_mask > 0.5
 
-    # 肌色サンプリング用のスムーズ画像
-    skin_smooth = cv2.GaussianBlur(image, (31, 31), 10)
-    color_map = skin_smooth.copy()
+    # 大きめブラーで肌テクスチャを均一化（毛穴・産毛ノイズ除去）
+    skin_smooth = cv2.GaussianBlur(image, (41, 41), 12)
+    result = image.copy()
 
     rows, cols = np.where(brow_mask_bool)
     if len(rows) == 0:
-        return color_map
+        return result
 
-    # 各列ごとに上端・下端を探し、上方の肌色からグラデーション
     for col in np.unique(cols):
         col_rows = rows[cols == col]
         top_row = col_rows.min()
         bottom_row = col_rows.max()
 
-        # 眉の上(額)と下(まぶた付近)から肌色をサンプリング
-        sample_above = max(0, top_row - 20)
-        sample_below = min(h - 1, bottom_row + 15)
-        color_above = skin_smooth[sample_above, col].astype(np.float32)
-        color_below = skin_smooth[sample_below, col].astype(np.float32)
+        # 眉の上下から肌色をサンプリング
+        above_row = max(0, top_row - sample_offset)
+        below_row = min(h - 1, bottom_row + sample_offset)
+        color_above = skin_smooth[above_row, col].astype(np.float32)
+        color_below = skin_smooth[below_row, col].astype(np.float32)
 
-        # この列の眉領域を上下グラデーションで埋める
         for row in col_rows:
             t = (row - top_row) / max(bottom_row - top_row, 1)
-            color_map[row, col] = (color_above * (1 - t) + color_below * t).astype(np.uint8)
+            result[row, col] = (color_above * (1 - t) + color_below * t).astype(np.uint8)
 
-    return color_map
+    return result
 
 
 def erase_eyebrows(
     image: np.ndarray,
     fm: FaceMesh,
-    inpaint_radius: int = 5,
-    blend_strength: float = 0.4,
     blur_scale: float = 1.0,
-    expand_ratio: float = 1.4,
 ) -> np.ndarray:
-    """眉を消す（ランドマークベースのスムーズマスク方式）
+    """眉を消す
 
     手順:
-    1. ランドマークからスムーズなポリゴンマスクを生成
-    2. cv2.inpaint でテクスチャ付きの肌色で埋める
-    3. 周辺肌色とブレンドして自然に仕上げる
+    1. ランドマークからタイトなポリゴンマスクを生成し少し拡張
+    2. 周辺肌色で眉領域を直接塗りつぶし
+    3. ソフトマスクで元画像と自然に合成
     """
     h, w = image.shape[:2]
 
-    # 1. スムーズなポリゴンマスク生成（メッシュ不使用）
-    brow_mask = build_eyebrow_polygon_mask(fm, w, h, expand_ratio=expand_ratio)
-
-    # 顔の高さに基づいたパラメータ
+    # 顔サイズ基準のパラメータ
     face_h = np.linalg.norm(
         fm.landmarks_px[10].astype(float) - fm.landmarks_px[152].astype(float)
     )
+    expand_px = max(3, int(face_h * 0.015))  # 眉外周の拡張量
 
-    # 少し膨張させて毛先の端までカバー
-    dilate_k = max(3, int(face_h * 0.01))
-    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (dilate_k, dilate_k))
-    brow_mask_dilated = cv2.dilate(brow_mask, kernel, iterations=1)
+    # 1. タイトなポリゴンマスク + 少し拡張
+    brow_mask = build_eyebrow_polygon_mask(fm, w, h, expand_px=expand_px)
 
-    # ソフトマスク（合成用）: 強めのブラーでなめらかに
-    soft_ksize = int(face_h * 0.04 * blur_scale)
-    brow_mask_soft = gaussian_blur_mask(brow_mask_dilated, soft_ksize)
+    # 2. 周辺肌色で眉を塗りつぶし
+    sample_offset = max(10, int(face_h * 0.04))
+    skin_filled = build_skin_color_image(image, brow_mask, sample_offset=sample_offset)
 
-    # 2. inpainting（2パスで段階的に消す）
-    inpaint_mask = (brow_mask_dilated * 255).astype(np.uint8)
-    inpainted = cv2.inpaint(image, inpaint_mask, inpaint_radius, cv2.INPAINT_TELEA)
-    inpainted = cv2.inpaint(inpainted, inpaint_mask, inpaint_radius, cv2.INPAINT_NS)
+    # 3. ソフトマスクでなめらかに合成
+    blur_ksize = max(5, int(face_h * 0.035 * blur_scale))
+    brow_mask_soft = gaussian_blur_mask(brow_mask, blur_ksize)
 
-    # 3. 肌色マップとブレンド（inpaintの不自然さを軽減）
-    skin_color_map = sample_skin_color_map(image, fm, brow_mask_dilated)
-
-    blended = cv2.addWeighted(
-        inpainted.astype(np.float32), 1.0 - blend_strength,
-        skin_color_map.astype(np.float32), blend_strength,
-        0,
-    )
-    blended = np.clip(blended, 0, 255).astype(np.uint8)
-
-    # 4. ソフトマスクで元画像と合成（なめらかな境界）
     alpha = brow_mask_soft[..., np.newaxis]
-    result = image.astype(np.float32) * (1.0 - alpha) + blended.astype(np.float32) * alpha
+    result = image.astype(np.float32) * (1.0 - alpha) + skin_filled.astype(np.float32) * alpha
     return np.clip(result, 0, 255).astype(np.uint8)
 
 
@@ -248,14 +202,8 @@ def main():
     parser = argparse.ArgumentParser(description="眉消し＆眉メイク")
     parser.add_argument("input", help="入力画像パス")
     parser.add_argument("-o", "--output", help="出力画像パス (default: eyebrow_result.png)")
-    parser.add_argument("--radius", type=int, default=5,
-                        help="inpaint 半径 (default: 5)")
-    parser.add_argument("--blend-strength", type=float, default=0.4,
-                        help="肌色ブレンド強度 (default: 0.4)")
     parser.add_argument("--blur", type=float, default=1.0,
                         help="マスクブラー倍率 (default: 1.0)")
-    parser.add_argument("--expand", type=float, default=1.4,
-                        help="眉ポリゴン拡大率 (default: 1.4)")
     parser.add_argument("--imgonly", action="store_true",
                         help="結果画像のみ (比較画像なし)")
     parser.add_argument("--zoom", action="store_true",
@@ -283,13 +231,7 @@ def main():
 
     # 眉消し適用
     print("眉消し処理中...")
-    output = erase_eyebrows(
-        image, fm,
-        inpaint_radius=args.radius,
-        blend_strength=args.blend_strength,
-        blur_scale=args.blur,
-        expand_ratio=args.expand,
-    )
+    output = erase_eyebrows(image, fm, blur_scale=args.blur)
 
     # 出力
     out_path = args.output or "eyebrow_result.png"
