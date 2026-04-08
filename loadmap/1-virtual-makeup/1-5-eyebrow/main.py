@@ -125,15 +125,68 @@ def _mirror_tile(patch: np.ndarray, target_h: int, target_w: int) -> np.ndarray:
     return np.hstack(cols)[:, :target_w]
 
 
-def sample_skin_color(image: np.ndarray, brow_mask: np.ndarray) -> np.ndarray:
-    """眉の近くから単一の肌色をサンプリング（左右の眉ごとに別の色）
+def _select_clean_patch(image: np.ndarray, x_min: int, x_max: int,
+                        y_above_min: int, y_above_max: int,
+                        patch_h: int, patch_w: int) -> np.ndarray | None:
+    """指定範囲から複数候補パッチをサンプリングし、暗いもの（眉/影）を除外して代表を返す
 
-    眉の上(額)と下(まぶた)の両方からサンプリングして平均を取る。
-    眉の真ん中あたりの色味になるので、置き換えても周辺となじむ。
+    手順:
+    1. 範囲内で複数の候補パッチを取得
+    2. 明度でソートし、暗い下位50%を除外（眉のかけら・影を除外）
+    3. 残った中で中央値明度のパッチを返す（明るすぎず暗すぎない代表）
+    """
+    h, w = image.shape[:2]
+    candidates = []
+
+    y_step = max(2, patch_h // 3)
+    for y_top in range(y_above_min, max(y_above_min + 1, y_above_max - patch_h + 1), y_step):
+        y_bot = y_top + patch_h
+        if y_bot > h:
+            continue
+        x_step = max(3, patch_w // 3)
+        for x_left in range(x_min, max(x_min + 1, x_max - patch_w + 1), x_step):
+            x_right = x_left + patch_w
+            if x_right > w:
+                continue
+            patch = image[y_top:y_bot, x_left:x_right]
+            if patch.shape[0] != patch_h or patch.shape[1] != patch_w:
+                continue
+            brightness = float(patch.mean())
+            candidates.append((brightness, patch))
+
+    if not candidates:
+        return None
+
+    # 暗い順にソート、下位50%を除外
+    candidates.sort(key=lambda c: c[0])
+    clean_candidates = candidates[len(candidates) // 2:]
+    # 残った中の中央値明度のパッチを返す
+    return clean_candidates[len(clean_candidates) // 2][1]
+
+
+def _color_match_patch(patch: np.ndarray, target_color: np.ndarray) -> np.ndarray:
+    """パッチを色補正してターゲット色に平均値を合わせる
+
+    パッチの平均色とターゲット色の差分を全ピクセルに加算する。
+    テクスチャ（高周波成分）は保持しつつ、色味だけ局所平均に揃える。
+    """
+    patch_f = patch.astype(np.float32)
+    patch_mean = patch_f.reshape(-1, 3).mean(axis=0)
+    diff = target_color.astype(np.float32) - patch_mean
+    return np.clip(patch_f + diff, 0, 255).astype(np.uint8)
+
+
+def build_skin_texture_image(image: np.ndarray, brow_mask: np.ndarray,
+                             forehead_top_y: int = 0) -> np.ndarray:
+    """眉の上の額から「明るい綺麗な肌パッチ」を抽出し、反転タイリングで眉領域を埋める
+
+    候補パッチを多数サンプリングし、明度上位群から代表パッチを選ぶことで
+    影や眉のかけらが混入したパッチを避ける。
+    forehead_top_y: 額の上限Y座標（髪の毛にサンプル範囲が入らないようにする）
     """
     h, w = image.shape[:2]
     brow_mask_bool = brow_mask > 0.5
-    color_map = np.zeros_like(image)
+    result = image.copy()
 
     mask_u8 = brow_mask_bool.astype(np.uint8) * 255
     num_labels, labels = cv2.connectedComponents(mask_u8)
@@ -149,37 +202,54 @@ def sample_skin_color(image: np.ndarray, brow_mask: np.ndarray) -> np.ndarray:
         bh = y_max - y_min + 1
         bw = x_max - x_min + 1
 
-        # 横方向: 眉の中央寄りだけサンプリング（端は影が入りやすい）
-        sample_left = max(0, x_min + bw // 4)
-        sample_right = min(w, x_max - bw // 4 + 1)
-        if sample_right <= sample_left:
+        # パッチサイズ: 小さめにして額の上の方からも取れるように
+        patch_h = max(4, bh // 2)
+        patch_w = max(8, bw // 3)
+
+        # サンプリング範囲: 眉骨の暗い影を避けるため、額の上の方まで広く探す
+        # 眉の bh*4 上 ～ bh*1 上 まで（ただし額の上限は超えない）
+        margin_min = max(5, bh)
+        margin_max = max(margin_min + patch_h * 2, bh * 4)
+        y_above_max = y_min - margin_min
+        y_above_min = max(forehead_top_y, y_min - margin_max)
+
+        # x範囲も少し余裕を持たせる
+        x_search_min = max(0, x_min - bw // 4)
+        x_search_max = min(w, x_max + bw // 4 + 1)
+
+        patch = _select_clean_patch(
+            image, x_search_min, x_search_max,
+            y_above_min, y_above_max,
+            patch_h, patch_w,
+        )
+        if patch is None:
             continue
 
-        # 上(額)サンプリング: 眉のすぐ上にマージンを設ける
-        margin_above = max(5, bh)
-        above_bottom = max(0, y_min - margin_above)
-        above_top = max(0, above_bottom - max(5, bh // 2))
-        above_area = image[above_top:above_bottom, sample_left:sample_right]
+        # 局所的な肌色平均にパッチを色補正
+        # 眉の上下から目標色をサンプリング（中央値）
+        target_above = image[max(0, y_min - bh):y_min,
+                             max(0, x_min + bw // 4):min(w, x_max - bw // 4 + 1)]
+        target_below = image[y_max + 1:min(h, y_max + 1 + bh // 2),
+                             max(0, x_min + bw // 4):min(w, x_max - bw // 4 + 1)]
+        target_colors = []
+        if target_above.size > 0:
+            target_colors.append(np.median(target_above.reshape(-1, 3), axis=0))
+        if target_below.size > 0:
+            target_colors.append(np.median(target_below.reshape(-1, 3), axis=0))
+        if target_colors:
+            target_color = np.mean(target_colors, axis=0)
+            patch = _color_match_patch(patch, target_color)
 
-        # 下(まぶた)サンプリング: 眉のすぐ下にマージンを設ける
-        margin_below = max(5, bh // 2)
-        below_top = min(h, y_max + margin_below)
-        below_bottom = min(h, below_top + max(5, bh // 3))
-        below_area = image[below_top:below_bottom, sample_left:sample_right]
+        # 反転タイリングで眉領域と同じサイズに拡張
+        tiled = _mirror_tile(patch, bh, bw)
 
-        # 上下の中央値を取得して平均
-        colors = []
-        if above_area.size > 0:
-            colors.append(np.median(above_area.reshape(-1, 3), axis=0))
-        if below_area.size > 0:
-            colors.append(np.median(below_area.reshape(-1, 3), axis=0))
-        if not colors:
-            continue
+        # 連結成分の形で貼り付け
+        comp_local = comp_bool[y_min:y_max + 1, x_min:x_max + 1]
+        result_region = result[y_min:y_max + 1, x_min:x_max + 1]
+        result_region[comp_local] = tiled[comp_local]
+        result[y_min:y_max + 1, x_min:x_max + 1] = result_region
 
-        skin_color = np.mean(colors, axis=0).astype(np.uint8)
-        color_map[comp_bool] = skin_color
-
-    return color_map
+    return result
 
 
 def erase_eyebrows(
@@ -187,12 +257,12 @@ def erase_eyebrows(
     fm: FaceMesh,
     blur_scale: float = 1.0,
 ) -> np.ndarray:
-    """眉を消す（シンプル単一肌色塗りつぶし方式）
+    """眉を消す
 
     手順:
     1. ランドマークからタイトなポリゴンマスクを生成し少し拡張
-    2. 眉のすぐ上から単一の肌色をサンプリング（中央値）
-    3. その色で眉領域を塗りつぶし
+    2. 眉の上から複数候補パッチをサンプリング → 明るい代表パッチを選択
+    3. そのパッチを反転タイリングで眉領域に貼り付け
     4. ソフトマスクで元画像と合成
     """
     h, w = image.shape[:2]
@@ -206,16 +276,25 @@ def erase_eyebrows(
     # 1. タイトなポリゴンマスク + 少し拡張
     brow_mask = build_eyebrow_polygon_mask(fm, w, h, expand_px=expand_px)
 
-    # 2-3. 単一肌色で眉領域を塗りつぶし
-    skin_filled = image.copy()
-    color_map = sample_skin_color(image, brow_mask)
-    brow_mask_bool = brow_mask > 0.5
-    skin_filled[brow_mask_bool] = color_map[brow_mask_bool]
+    # 額の上限（髪の毛にかからないように、ランドマーク10とまゆの中間あたり）
+    forehead_top_lm = fm.landmarks_px[10]  # 額の頂上
+    brow_top_lm = fm.landmarks_px[9]        # 眉の中間（上）
+    # 額の頂上から眉の上端の間の中央あたりを上限にする（髪に近すぎない範囲）
+    forehead_top_y = int(forehead_top_lm[1] + (brow_top_lm[1] - forehead_top_lm[1]) * 0.3)
 
-    # 4. ソフトマスクで元画像と合成（境界をなめらかに）
-    # 強めのブラーで境界がフラットに見えないようにする
-    blur_ksize = max(7, int(face_h * 0.05 * blur_scale))
-    soft_mask = gaussian_blur_mask(brow_mask, blur_ksize)
+    # 2-3. 明るいパッチを選んで反転タイリングで眉領域を埋める
+    skin_filled = build_skin_texture_image(image, brow_mask, forehead_top_y=forehead_top_y)
+
+    # 4. 中央は完全置換、外周のみフェザー
+    # 先に大きく膨張させてからブラーすることで、中央はα=1.0を保ち外周だけソフトに
+    blur_ksize = max(7, int(face_h * 0.04 * blur_scale))
+    feather_dilate = blur_ksize // 2 + 3
+    feather_kernel = cv2.getStructuringElement(
+        cv2.MORPH_ELLIPSE, (feather_dilate * 2 + 1, feather_dilate * 2 + 1)
+    )
+    expanded_mask = cv2.dilate(brow_mask, feather_kernel, iterations=1)
+    soft_mask = gaussian_blur_mask(expanded_mask, blur_ksize)
+
     alpha = soft_mask[..., np.newaxis]
     result = image.astype(np.float32) * (1.0 - alpha) + skin_filled.astype(np.float32) * alpha
     return np.clip(result, 0, 255).astype(np.uint8)
