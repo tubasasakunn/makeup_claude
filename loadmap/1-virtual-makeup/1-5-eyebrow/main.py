@@ -93,45 +93,84 @@ def build_eyebrow_polygon_mask(fm: FaceMesh, w: int, h: int,
     return mask
 
 
-def build_skin_texture_image(image: np.ndarray, brow_mask: np.ndarray) -> np.ndarray:
-    """眉領域を額のテクスチャで置き換えた画像を生成
+def _mirror_tile(patch: np.ndarray, target_h: int, target_w: int) -> np.ndarray:
+    """パッチを反転タイリングで指定サイズに拡張
 
-    各列ごとに眉の上の額からピクセル列をコピーして眉領域に貼り付ける。
-    平坦な肌色ではなく実際の肌テクスチャ（毛穴・微妙な色変化）を保持する。
+    上下反転・左右反転を交互に組み合わせることで、繰り返しの不自然さを軽減する。
+    """
+    ph, pw = patch.shape[:2]
+    if ph == 0 or pw == 0:
+        return np.zeros((target_h, target_w, patch.shape[2]), dtype=patch.dtype)
+
+    # 縦方向: 上下反転を交互に
+    rows = []
+    cur_h = 0
+    flip_v = False
+    while cur_h < target_h:
+        row_patch = patch[::-1] if flip_v else patch
+        rows.append(row_patch)
+        cur_h += ph
+        flip_v = not flip_v
+    vstacked = np.vstack(rows)[:target_h]
+
+    # 横方向: 左右反転を交互に
+    cols = []
+    cur_w = 0
+    flip_h = False
+    while cur_w < target_w:
+        col_patch = vstacked[:, ::-1] if flip_h else vstacked
+        cols.append(col_patch)
+        cur_w += pw
+        flip_h = not flip_h
+    return np.hstack(cols)[:, :target_w]
+
+
+def build_skin_texture_image(image: np.ndarray, brow_mask: np.ndarray,
+                             fm: FaceMesh = None) -> np.ndarray:
+    """眉の上の額から綺麗な肌パッチを抽出し、反転タイリングで眉領域を埋める
+
+    パッチは眉のすぐ上から取らず、十分なマージンをあけて綺麗な肌だけを取得する。
     """
     h, w = image.shape[:2]
     brow_mask_bool = brow_mask > 0.5
     result = image.copy()
 
-    rows, cols = np.where(brow_mask_bool)
-    if len(rows) == 0:
-        return result
+    # 連結成分（左右の眉を分ける）
+    mask_u8 = (brow_mask_bool.astype(np.uint8)) * 255
+    num_labels, labels = cv2.connectedComponents(mask_u8)
 
-    for col in np.unique(cols):
-        col_rows = rows[cols == col]
-        top_row = int(col_rows.min())
-        bottom_row = int(col_rows.max())
-        brow_height = bottom_row - top_row + 1
-
-        # 眉の上の額からテクスチャをサンプリング
-        # 額領域: 眉の直上を避け、眉と同じ高さ分上から取得
-        gap = 3
-        forehead_bottom = top_row - gap
-        forehead_top = forehead_bottom - brow_height + 1
-        if forehead_top < 0:
-            # 額領域が足りない場合は取れる範囲だけ
-            forehead_top = 0
-
-        forehead_strip = image[forehead_top:forehead_bottom + 1, col]
-        n = len(forehead_strip)
-        if n == 0:
+    for label_id in range(1, num_labels):
+        comp_bool = labels == label_id
+        ys, xs = np.where(comp_bool)
+        if len(ys) == 0:
             continue
-        if n >= brow_height:
-            result[top_row:bottom_row + 1, col] = forehead_strip[-brow_height:]
-        else:
-            # 足りない分は最上端の色で埋める
-            pad = np.tile(forehead_strip[0], (brow_height - n, 1))
-            result[top_row:bottom_row + 1, col] = np.vstack([pad, forehead_strip])
+
+        y_min, y_max = int(ys.min()), int(ys.max())
+        x_min, x_max = int(xs.min()), int(xs.max())
+        bh = y_max - y_min + 1
+        bw = x_max - x_min + 1
+
+        # 眉のすぐ上にマージンを設けて綺麗な肌パッチをサンプリング
+        # マージン: 眉の高さの半分（最低5px）以上
+        margin = max(5, bh // 2)
+        patch_bottom = y_min - margin
+        patch_top = patch_bottom - bh  # 眉と同じ高さ分
+        if patch_top < 0:
+            patch_top = 0
+            patch_bottom = max(patch_top + 1, patch_bottom)
+
+        patch = image[patch_top:patch_bottom, x_min:x_max + 1]
+        if patch.shape[0] == 0 or patch.shape[1] == 0:
+            continue
+
+        # 反転タイリングで眉領域と同じサイズに拡張
+        tiled = _mirror_tile(patch, bh, bw)
+
+        # 連結成分の形で貼り付け
+        comp_local = comp_bool[y_min:y_max + 1, x_min:x_max + 1]
+        result_region = result[y_min:y_max + 1, x_min:x_max + 1]
+        result_region[comp_local] = tiled[comp_local]
+        result[y_min:y_max + 1, x_min:x_max + 1] = result_region
 
     return result
 
@@ -145,7 +184,7 @@ def erase_eyebrows(
 
     手順:
     1. ランドマークからタイトなポリゴンマスクを生成し少し拡張
-    2. 額のテクスチャを眉領域にコピー（テクスチャ保持）
+    2. 眉の上の綺麗な肌パッチを反転タイリングで眉領域に貼り付け
     3. cv2.seamlessClone で Poisson 合成して自然になじませる
     4. 元画像との境界をソフトマスクでなめらかに
     """
@@ -160,11 +199,10 @@ def erase_eyebrows(
     # 1. タイトなポリゴンマスク + 少し拡張
     brow_mask = build_eyebrow_polygon_mask(fm, w, h, expand_px=expand_px)
 
-    # 2. 額テクスチャを眉領域にコピー（実際の肌テクスチャを保持）
-    texture_filled = build_skin_texture_image(image, brow_mask)
+    # 2. 反転タイリングで眉領域を綺麗な肌パッチで埋める
+    texture_filled = build_skin_texture_image(image, brow_mask, fm)
 
     # 3. seamlessClone で Poisson 合成（周辺の色味・ライティングに自動調整）
-    # マスクを少し縮めて境界の不自然さを避ける
     erode_k = max(2, expand_px // 2)
     erode_kernel = cv2.getStructuringElement(
         cv2.MORPH_ELLIPSE, (erode_k * 2 + 1, erode_k * 2 + 1)
@@ -172,7 +210,6 @@ def erase_eyebrows(
     seamless_mask = cv2.erode(brow_mask, erode_kernel, iterations=1)
     seamless_mask_u8 = (seamless_mask * 255).astype(np.uint8)
 
-    # 左右の眉を個別に seamlessClone（連結成分ごと）
     num_labels, labels = cv2.connectedComponents(seamless_mask_u8)
     cloned = image.copy()
     for label_id in range(1, num_labels):
@@ -187,12 +224,11 @@ def erase_eyebrows(
                 texture_filled, cloned, comp_mask, (cx, cy), cv2.NORMAL_CLONE
             )
         except cv2.error:
-            # seamlessClone失敗時は通常合成にフォールバック
             alpha = (comp_mask.astype(np.float32) / 255.0)[..., np.newaxis]
             cloned = (cloned.astype(np.float32) * (1 - alpha) +
                       texture_filled.astype(np.float32) * alpha).astype(np.uint8)
 
-    # 4. 元画像との境界をソフトに合成（広めのマスクで段階的に戻す）
+    # 4. 元画像との境界をソフトに合成
     blur_ksize = max(5, int(face_h * 0.025 * blur_scale))
     soft_mask = gaussian_blur_mask(brow_mask, blur_ksize)
     alpha = soft_mask[..., np.newaxis]
