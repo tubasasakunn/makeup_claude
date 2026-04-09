@@ -157,16 +157,16 @@ EYEBROW_TYPES = {
     },
     "arch": {
         "peak_position": 0.65,
-        "peak_height_ratio": 0.48,
-        "tail_height_ratio": 0.1,
+        "peak_height_ratio": 0.35,
+        "tail_height_ratio": 0.08,
         "thickness_ratio": 1.5,
         "length_ratio": 1.0,
         "desc": "アーチ眉（上品・標準）",
     },
     "angular": {
         "peak_position": 0.65,
-        "peak_height_ratio": 0.6,
-        "tail_height_ratio": 0.2,
+        "peak_height_ratio": 0.42,
+        "tail_height_ratio": 0.14,
         "thickness_ratio": 1.5,
         "length_ratio": 1.0,
         "desc": "角度眉（シャープ・クール）",
@@ -181,10 +181,10 @@ EYEBROW_TYPES = {
     },
     "long_arch": {
         "peak_position": 0.68,
-        "peak_height_ratio": 0.35,
-        "tail_height_ratio": 0.12,
+        "peak_height_ratio": 0.3,
+        "tail_height_ratio": 0.1,
         "thickness_ratio": 1.3,
-        "length_ratio": 1.1,
+        "length_ratio": 1.02,
         "desc": "長めアーチ（大人・クール）",
     },
 }
@@ -268,27 +268,31 @@ def _solve_bezier_control(p0: np.ndarray, pm: np.ndarray, p2: np.ndarray,
 def _taper(t: float) -> float:
     """眉の太さをtで調整（眉頭・眉尻が細くなる自然な形）
 
-    t=0(頭): 0.85倍
-    t=0.3: 1.0倍（最大）
-    t=1(尻): 0.55倍
+    滑らかなコサインベースのテーパー（折れ線だとカクつく）
+    t=0(頭): 0.55倍
+    t=0.35: 1.0倍（最大）
+    t=1(尻): 0.45倍
     """
-    if t < 0.3:
-        # 頭から最大へ: 0.85 → 1.0
-        return 0.85 + (t / 0.3) * 0.15
+    # コサインで滑らかに: t=0→0.55, t=0.35→1.0, t=1→0.45
+    import math
+    if t < 0.35:
+        # 0..0.35 で cos(0..π/2) の逆 → 0.55 → 1.0
+        x = t / 0.35
+        return 0.55 + 0.45 * (1 - math.cos(x * math.pi / 2))
     else:
-        # 最大から尻へ: 1.0 → 0.55
-        s = (t - 0.3) / 0.7
-        return 1.0 - s * 0.45
+        # 0.35..1 で cos(0..π/2) → 1.0 → 0.45
+        x = (t - 0.35) / 0.65
+        return 0.45 + 0.55 * math.cos(x * math.pi / 2)
 
 
 def generate_brow_polygon(anchors: dict, brow_type: str) -> np.ndarray:
     """眉タイプに応じた上下ラインを生成してポリゴン頂点列を返す
 
     アプローチ:
-    1. センターライン（眉の中心線）をBezier曲線で生成
-       head → peak(上にズレる) → tail
-    2. 各センター点の上下に thickness/2 ずらして上辺/下辺を作成
-    3. taper で先端を細く
+    1. センターラインを二次Bezier曲線で生成 (100点サンプリング)
+    2. 各点での接線方向を計算し、その法線（垂直方向）に±thickness/2オフセット
+       → 曲線に沿って自然に厚みが付き、カクカクしない
+    3. taper（コサインベース）で先端を滑らかに細く
 
     返り値: (N*2, 2) のint32配列（上辺N点 + 下辺N点逆順）
     """
@@ -298,7 +302,7 @@ def generate_brow_polygon(anchors: dict, brow_type: str) -> np.ndarray:
     tail = anchors["tail"].copy()
     eye_h = anchors["eye_height"]
 
-    # 長さ調整（尻を head→tail 方向に伸縮）
+    # 長さ調整
     length_ratio = params["length_ratio"]
     if length_ratio != 1.0:
         tail = head + (tail - head) * length_ratio
@@ -306,56 +310,175 @@ def generate_brow_polygon(anchors: dict, brow_type: str) -> np.ndarray:
     # 眉尻の高さ調整（センターを下げる）
     tail[1] += eye_h * params["tail_height_ratio"]
 
-    # 眉山: センターラインの上に盛り上がる
+    # 眉山: センターラインの上
     peak_t = params["peak_position"]
     peak_x = head[0] + (tail[0] - head[0]) * peak_t
     peak_y = head[1] - eye_h * params["peak_height_ratio"]
     peak = np.array([peak_x, peak_y])
 
-    # センターライン（Bezier曲線）
-    n = 40
+    # センターライン（Bezier曲線、高解像度サンプリング）
+    n = 100
     p1 = _solve_bezier_control(head, peak, tail, peak_t)
     center_line = _quadratic_bezier(head, p1, tail, n=n)
 
     # 太さ
     base_thickness = eye_h * params["thickness_ratio"]
 
-    # 上下辺をセンターラインから ±thickness/2 でtaper
+    # 各点の接線方向を計算（有限差分）→ 法線を求める
+    # 端点は片側差分、中間は中央差分
+    tangents = np.zeros_like(center_line)
+    tangents[0] = center_line[1] - center_line[0]
+    tangents[-1] = center_line[-1] - center_line[-2]
+    tangents[1:-1] = (center_line[2:] - center_line[:-2]) / 2
+
+    # 正規化
+    lengths = np.linalg.norm(tangents, axis=1, keepdims=True)
+    lengths = np.maximum(lengths, 1e-6)
+    tangents /= lengths
+
+    # 法線 = 接線を90度回転 (x,y) -> (-y,x)
+    normals = np.stack([-tangents[:, 1], tangents[:, 0]], axis=1)
+
+    # 各点で法線方向に ±half_thickness * taper
+    ts = np.linspace(0, 1, n)
     upper = np.zeros_like(center_line)
     lower = np.zeros_like(center_line)
-    ts = np.linspace(0, 1, n)
     for i, t in enumerate(ts):
         half_thick = base_thickness * 0.5 * _taper(t)
-        upper[i] = center_line[i] + np.array([0, -half_thick])  # 上(Y小)
-        lower[i] = center_line[i] + np.array([0, +half_thick])  # 下(Y大)
+        upper[i] = center_line[i] - normals[i] * half_thick  # 上(法線反対側)
+        lower[i] = center_line[i] + normals[i] * half_thick  # 下(法線側)
 
-    # ポリゴン頂点列（上辺 → 下辺逆順）
+    # ポリゴン頂点列
     polygon = np.vstack([upper, lower[::-1]])
     return polygon.astype(np.int32)
 
 
-def build_brow_mask(fm: FaceMesh, w: int, h: int, brow_type: str) -> np.ndarray:
-    """両眉のマスクを生成（float32, 0-1）"""
-    mask = np.zeros((h, w), dtype=np.float32)
+def build_brow_mask(fm: FaceMesh, w: int, h: int, brow_type: str,
+                    supersample: int = 2) -> np.ndarray:
+    """両眉のマスクを生成（float32, 0-1）
+
+    supersample: 指定倍率で描画してから縮小（アンチエイリアス用）
+    """
+    # supersample 倍の解像度で描画
+    sh, sw = h * supersample, w * supersample
+    mask_hi = np.zeros((sh, sw), dtype=np.float32)
 
     for side in ["right", "left"]:
         anchors = compute_brow_anchors(fm, side=side)
         polygon = generate_brow_polygon(anchors, brow_type)
-        cv2.fillPoly(mask, [polygon], 1.0)
+        polygon_hi = polygon * supersample
+        cv2.fillPoly(mask_hi, [polygon_hi], 1.0)
 
+    # INTER_AREA で縮小 → アンチエイリアス効果
+    mask = cv2.resize(mask_hi, (w, h), interpolation=cv2.INTER_AREA)
     return mask
 
 
-def _make_soft_density(mask: np.ndarray, face_h: float, blur_scale: float) -> np.ndarray:
-    """マスクから密度マップを作成（中央は一様、エッジのみソフト）
+def _make_directional_noise(shape: tuple, face_h: float) -> np.ndarray:
+    """眉の方向（水平）に沿って引き伸ばされた毛流れノイズを生成"""
+    rng = np.random.default_rng(42)
+    noise = rng.normal(0, 1.0, shape).astype(np.float32)
 
-    眉は一様な濃度でOKなので、shadowの距離変換方式ではなく
-    単純にマスクを軽くブラーしてエッジだけ柔らかくする。
+    # 水平方向モーションブラー（毛流れ風）
+    motion_len = max(5, int(face_h * 0.015)) | 1  # 奇数
+    kernel = np.zeros((1, motion_len), dtype=np.float32)
+    kernel[0, :] = 1.0 / motion_len
+    noise = cv2.filter2D(noise, -1, kernel)
+
+    # さらに縦に軽くブラーして粒状すぎないように
+    noise = cv2.GaussianBlur(noise, (3, 3), 0.8)
+
+    # 正規化
+    noise = (noise - noise.mean()) / (noise.std() + 1e-6)
+    return noise
+
+
+def _make_soft_density(mask: np.ndarray, face_h: float, blur_scale: float,
+                       noise_amount: float = 0.18) -> np.ndarray:
+    """マスクから密度マップを作成
+
+    1. 2段階ブラーで滑らかなフェード
+    2. 方向性ノイズ（水平方向に引き伸ばし）で毛流れ感
     """
-    # 軽いブラーでエッジのみソフトに
-    ksize = max(3, int(face_h * 0.008 * blur_scale))
-    density = gaussian_blur_mask(mask, ksize)
+    # 中ブラー
+    ksize1 = max(5, int(face_h * 0.018 * blur_scale))
+    density = gaussian_blur_mask(mask, ksize1)
+    # 小ブラー
+    ksize2 = max(3, int(face_h * 0.008 * blur_scale))
+    density = gaussian_blur_mask(density, ksize2)
+
+    # 方向性ノイズで毛流れ感
+    if noise_amount > 0:
+        noise = _make_directional_noise(density.shape, face_h)
+        mask_region = density > 0.05
+        density[mask_region] = density[mask_region] * (1.0 + noise[mask_region] * noise_amount)
+        density = np.clip(density, 0, 1)
+
     return density
+
+
+def _apply_density_gradient(mask: np.ndarray, fm: FaceMesh,
+                            head_fade: float = 0.2, tail_fade: float = 0.3) -> np.ndarray:
+    """マスクに眉頭/眉尻のフェードを適用
+
+    眉頭（head）は head_fade の範囲で薄く、
+    眉尻（tail）は tail_fade の範囲で薄くフェード。
+    """
+    h, w = mask.shape[:2]
+    result = mask.copy()
+
+    for side in ["right", "left"]:
+        anchors = compute_brow_anchors(fm, side=side)
+        head = anchors["head"]
+        tail = anchors["tail"]
+
+        # 眉の軸ベクトル（head → tail）
+        axis = tail - head
+        axis_len = np.linalg.norm(axis)
+        if axis_len < 1e-3:
+            continue
+        axis_unit = axis / axis_len
+
+        # マスク内の各ピクセルを head→tail 軸に投影
+        ys, xs = np.where(mask > 0.05)
+        if len(ys) == 0:
+            continue
+
+        # 対応する眉の連結成分だけに適用するため、眉近傍だけ処理
+        pts = np.column_stack([xs - head[0], ys - head[1]]).astype(np.float32)
+        proj = pts @ axis_unit  # 0 ～ axis_len の範囲
+        t = proj / axis_len  # 0 ～ 1 (軸外は負や1超)
+
+        # 範囲内のピクセルのみ
+        in_range = (t >= -0.1) & (t <= 1.1)
+        if not in_range.any():
+            continue
+
+        # フェード係数を計算
+        fade = np.ones_like(t)
+        # 眉頭フェード (t < head_fade で薄く)
+        head_mask = t < head_fade
+        if head_mask.any():
+            fade[head_mask] = 0.6 + 0.4 * (t[head_mask] / head_fade)
+        # 眉尻フェード (t > 1 - tail_fade で薄く)
+        tail_start = 1.0 - tail_fade
+        tail_mask = t > tail_start
+        if tail_mask.any():
+            fade[tail_mask] = 0.3 + 0.7 * (1 - (t[tail_mask] - tail_start) / tail_fade)
+            fade[tail_mask] = np.clip(fade[tail_mask], 0.3, 1.0)
+
+        # 軸外は変更なし
+        fade[~in_range] = 1.0
+
+        # 適用（最小値で合成: 既に弱いところはそのまま）
+        apply_mask = in_range
+        idx = np.where(apply_mask)[0]
+        ys_apply = ys[idx]
+        xs_apply = xs[idx]
+        fade_apply = fade[idx]
+        result[ys_apply, xs_apply] = result[ys_apply, xs_apply] * fade_apply
+
+    return result
 
 
 def draw_eyebrows(
@@ -389,10 +512,13 @@ def draw_eyebrows(
         fm.landmarks_px[10].astype(float) - fm.landmarks_px[152].astype(float)
     )
 
-    # 眉マスク生成
+    # 眉マスク生成（super-samplingでアンチエイリアス）
     mask = build_brow_mask(fm, w, h, brow_type)
 
-    # ソフトな密度マップ（距離変換 + ブラー）
+    # 眉頭/眉尻の濃度グラデーション
+    mask = _apply_density_gradient(mask, fm)
+
+    # ソフトな密度マップ（ブラー + 方向性ノイズ）
     density = _make_soft_density(mask, face_h, blur_scale)
 
     # 色をアルファブレンド（normal blend）
