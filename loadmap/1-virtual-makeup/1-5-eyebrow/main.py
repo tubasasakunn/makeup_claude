@@ -83,52 +83,26 @@ def build_eyebrow_polygon_mask(fm: FaceMesh, w: int, h: int,
     return mask
 
 
-def build_skin_prefill(image: np.ndarray, brow_mask: np.ndarray) -> np.ndarray:
-    """眉領域を局所肌色で事前置換した画像を生成
+def build_skin_prefill(image: np.ndarray, brow_mask: np.ndarray,
+                       face_h: float) -> np.ndarray:
+    """眉領域を「溶かした」肌色で事前置換した画像を生成
 
     cv2.inpaint は周囲のピクセル色を内側に伝播させるアルゴリズムなので、
     眉の暗い色を残したまま inpaint すると暗い色も伝播してしまう。
-    あらかじめ眉領域を周辺の肌色（中央値）で塗りつぶすことで、
-    後段のTELEAが綺麗な肌色テクスチャを伝播できるようになる。
+
+    本関数では cv2.medianBlur で大きなカーネルサイズの中央値フィルタを適用し、
+    眉の暗い細い線が中央値計算で除外される性質を利用する。
+    結果として「眉が溶けて」周辺の自然な肌色変化が残るpre-fill画像が得られる。
     """
-    h, w = image.shape[:2]
-    brow_mask_bool = brow_mask > 0.5
+    # カーネルサイズは顔サイズに比例（眉幅より十分大きく）
+    ksize = max(31, int(face_h * 0.06) | 1)  # 必ず奇数
+    if ksize % 2 == 0:
+        ksize += 1
+
+    median_blurred = cv2.medianBlur(image, ksize)
     result = image.copy()
-
-    rows, cols = np.where(brow_mask_bool)
-    if len(rows) == 0:
-        return result
-
-    for col in np.unique(cols):
-        col_rows = rows[cols == col]
-        top = int(col_rows.min())
-        bot = int(col_rows.max())
-        bh = bot - top + 1
-
-        # 上(額)サンプル
-        above_h = max(5, bh)
-        above_top = max(0, top - above_h)
-        above = image[above_top:top, col].astype(np.float32)
-
-        # 下(まぶた)サンプル
-        below_h = max(5, bh // 2)
-        below_bot = min(h, bot + 1 + below_h)
-        below = image[bot + 1:below_bot, col].astype(np.float32)
-
-        if len(above) == 0 and len(below) == 0:
-            continue
-
-        if len(above) > 0 and len(below) > 0:
-            samples = np.vstack([above, below])
-        elif len(above) > 0:
-            samples = above
-        else:
-            samples = below
-
-        # 中央値（暗い眉の影響を排除）
-        skin_color = np.median(samples, axis=0)
-        result[col_rows, col] = skin_color.astype(np.uint8)
-
+    brow_mask_bool = brow_mask > 0.5
+    result[brow_mask_bool] = median_blurred[brow_mask_bool]
     return result
 
 
@@ -179,8 +153,8 @@ def erase_eyebrows(
     brow_mask = build_eyebrow_polygon_mask(fm, w, h, expand_px=expand_px)
     mask_u8 = (brow_mask * 255).astype(np.uint8)
 
-    # 2. 局所肌色で事前置換（暗い眉色の伝播を防ぐ）
-    prefilled = build_skin_prefill(image, brow_mask)
+    # 2. medianBlurで眉を溶かして事前置換（暗い眉色の伝播を防ぐ）
+    prefilled = build_skin_prefill(image, brow_mask, face_h)
 
     # 3. TELEA で自然なテクスチャ補完
     inpaint_radius = max(8, int(face_h * 0.025))
