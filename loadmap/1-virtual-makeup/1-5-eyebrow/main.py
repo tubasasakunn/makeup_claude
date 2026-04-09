@@ -133,40 +133,40 @@ def erase_eyebrows(
 EYEBROW_TYPES = {
     "straight": {
         "peak_position": 0.5,
-        "peak_height_ratio": 0.0,
+        "peak_height_ratio": 0.05,
         "tail_height_ratio": 0.0,
-        "thickness_ratio": 1.9,
-        "length_ratio": 1.0,
+        "thickness_ratio": 1.3,
+        "length_ratio": 0.95,
         "desc": "ストレート眉（若々しい・韓流）",
     },
     "parallel_thick": {
-        "peak_position": 0.5,
-        "peak_height_ratio": 0.15,
+        "peak_position": 0.55,
+        "peak_height_ratio": 0.08,
         "tail_height_ratio": 0.0,
-        "thickness_ratio": 1.9,
+        "thickness_ratio": 1.5,
         "length_ratio": 1.0,
         "desc": "並行太眉（ナチュラル・男らしい）",
     },
     "natural_arch": {
-        "peak_position": 0.65,
-        "peak_height_ratio": 0.35,
-        "tail_height_ratio": 0.1,
-        "thickness_ratio": 1.6,
+        "peak_position": 0.6,
+        "peak_height_ratio": 0.3,
+        "tail_height_ratio": 0.05,
+        "thickness_ratio": 1.4,
         "length_ratio": 1.0,
         "desc": "ナチュラルアーチ（知的・バランス）",
     },
     "arch": {
         "peak_position": 0.65,
-        "peak_height_ratio": 0.55,
-        "tail_height_ratio": 0.2,
+        "peak_height_ratio": 0.48,
+        "tail_height_ratio": 0.1,
         "thickness_ratio": 1.5,
         "length_ratio": 1.0,
         "desc": "アーチ眉（上品・標準）",
     },
     "angular": {
-        "peak_position": 0.6,
-        "peak_height_ratio": 0.75,
-        "tail_height_ratio": 0.3,
+        "peak_position": 0.65,
+        "peak_height_ratio": 0.6,
+        "tail_height_ratio": 0.2,
         "thickness_ratio": 1.5,
         "length_ratio": 1.0,
         "desc": "角度眉（シャープ・クール）",
@@ -175,14 +175,14 @@ EYEBROW_TYPES = {
         "peak_position": 0.5,
         "peak_height_ratio": 0.08,
         "tail_height_ratio": 0.0,
-        "thickness_ratio": 2.2,
-        "length_ratio": 0.85,
+        "thickness_ratio": 1.65,
+        "length_ratio": 0.82,
         "desc": "短め太眉（ワイルド・強い）",
     },
     "long_arch": {
-        "peak_position": 0.7,
-        "peak_height_ratio": 0.4,
-        "tail_height_ratio": 0.25,
+        "peak_position": 0.68,
+        "peak_height_ratio": 0.35,
+        "tail_height_ratio": 0.12,
         "thickness_ratio": 1.3,
         "length_ratio": 1.1,
         "desc": "長めアーチ（大人・クール）",
@@ -191,8 +191,8 @@ EYEBROW_TYPES = {
 
 # デフォルト設定
 DEFAULT_EYEBROW_TYPE = "natural_arch"
-DEFAULT_EYEBROW_COLOR_RGB = (60, 40, 30)  # ダークブラウン
-DEFAULT_EYEBROW_INTENSITY = 0.85
+DEFAULT_EYEBROW_COLOR_RGB = (85, 60, 45)  # ミディアムブラウン（暗すぎない）
+DEFAULT_EYEBROW_INTENSITY = 0.5           # シャドウと同じくらいソフトに
 
 
 def compute_brow_anchors(fm: FaceMesh, side: str = "right") -> dict:
@@ -219,8 +219,9 @@ def compute_brow_anchors(fm: FaceMesh, side: str = "right") -> dict:
     eye_height = abs(eye_top[1] - eye_bot[1])
 
     # 眉頭: 小鼻外縁の真上、眉センターラインの高さ
+    # 実測は 1.86 だが、やや上に寄せて自然な眉骨ラインに
     head_x = nose_wing[0]
-    head_y = eye_top[1] - eye_height * 1.86
+    head_y = eye_top[1] - eye_height * 1.95
 
     # 眉尻: 小鼻-目尻の延長線上で Y == head_y となる点
     dx = outer_eye[0] - nose_wing[0]
@@ -345,15 +346,32 @@ def build_brow_mask(fm: FaceMesh, w: int, h: int, brow_type: str) -> np.ndarray:
     return mask
 
 
+def _make_soft_density(mask: np.ndarray, face_h: float, blur_scale: float) -> np.ndarray:
+    """マスクから密度マップを作成（中央は一様、エッジのみソフト）
+
+    眉は一様な濃度でOKなので、shadowの距離変換方式ではなく
+    単純にマスクを軽くブラーしてエッジだけ柔らかくする。
+    """
+    # 軽いブラーでエッジのみソフトに
+    ksize = max(3, int(face_h * 0.008 * blur_scale))
+    density = gaussian_blur_mask(mask, ksize)
+    return density
+
+
 def draw_eyebrows(
     image: np.ndarray,
     fm: FaceMesh,
     brow_type: str = DEFAULT_EYEBROW_TYPE,
     color_rgb: tuple = DEFAULT_EYEBROW_COLOR_RGB,
     intensity: float = DEFAULT_EYEBROW_INTENSITY,
-    edge_blur: float = 1.0,
+    blur_scale: float = 1.0,
 ) -> np.ndarray:
     """眉を描画する（眉消し済み画像が前提）
+
+    シャドウと同じアルファブレンド方式:
+    - ポリゴンマスク → 距離変換で密度グラデーション
+    - 強めのブラーで柔らかいエッジ
+    - 低い強度（0.5程度）で上品に
 
     Args:
         image: 眉消し済み画像 (BGR)
@@ -361,7 +379,7 @@ def draw_eyebrows(
         brow_type: 眉タイプ名 (EYEBROW_TYPES のキー)
         color_rgb: 眉の色 (R, G, B)
         intensity: 描画強度 0-1
-        edge_blur: エッジのブラー倍率
+        blur_scale: ブラー倍率
     """
     if brow_type not in EYEBROW_TYPES:
         raise ValueError(f"Unknown brow type: {brow_type}. Available: {list(EYEBROW_TYPES.keys())}")
@@ -374,17 +392,13 @@ def draw_eyebrows(
     # 眉マスク生成
     mask = build_brow_mask(fm, w, h, brow_type)
 
-    # エッジをソフトに
-    blur_ksize = max(3, int(face_h * 0.008 * edge_blur))
-    if blur_ksize % 2 == 0:
-        blur_ksize += 1
-    soft_mask = gaussian_blur_mask(mask, blur_ksize)
+    # ソフトな密度マップ（距離変換 + ブラー）
+    density = _make_soft_density(mask, face_h, blur_scale)
 
-    # 色を適用（BGRに変換）
+    # 色をアルファブレンド（normal blend）
     color_bgr = np.array([color_rgb[2], color_rgb[1], color_rgb[0]], dtype=np.float32)
-    alpha = (soft_mask * intensity)[..., np.newaxis]
+    alpha = (density * intensity)[..., np.newaxis]
 
-    # src * (1 - a) + color * a でブレンド
     src_f = image.astype(np.float32)
     color_layer = np.broadcast_to(color_bgr, src_f.shape)
     result = src_f * (1.0 - alpha) + color_layer * alpha
