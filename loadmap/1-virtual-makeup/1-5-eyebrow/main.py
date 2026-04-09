@@ -3,10 +3,7 @@
 
 Phase 1: 眉消し
   - ランドマークからスムーズなポリゴンマスクを生成（メッシュ不使用）
-  - 眉領域を局所肌色で事前置換（暗い眉色の伝播を防ぐ）
-  - cv2.inpaint TELEA でテクスチャ補完
-  - cv2.seamlessClone で周辺の色味に自動マッチ
-  - フェザーマスクで境界をなめらかに合成
+  - cv2.inpaint TELEA（大きめradius）で自然に補完
 
 Phase 2: 眉描画（今後実装）
   - 消した上に新しい眉を描画
@@ -83,63 +80,19 @@ def build_eyebrow_polygon_mask(fm: FaceMesh, w: int, h: int,
     return mask
 
 
-def build_skin_prefill(image: np.ndarray, brow_mask: np.ndarray,
-                       face_h: float) -> np.ndarray:
-    """眉領域を「溶かした」肌色で事前置換した画像を生成
-
-    cv2.inpaint は周囲のピクセル色を内側に伝播させるアルゴリズムなので、
-    眉の暗い色を残したまま inpaint すると暗い色も伝播してしまう。
-
-    本関数では cv2.medianBlur で大きなカーネルサイズの中央値フィルタを適用し、
-    眉の暗い細い線が中央値計算で除外される性質を利用する。
-    結果として「眉が溶けて」周辺の自然な肌色変化が残るpre-fill画像が得られる。
-    """
-    # カーネルサイズは顔サイズに比例（眉幅より十分大きく）
-    ksize = max(31, int(face_h * 0.06) | 1)  # 必ず奇数
-    if ksize % 2 == 0:
-        ksize += 1
-
-    median_blurred = cv2.medianBlur(image, ksize)
-    result = image.copy()
-    brow_mask_bool = brow_mask > 0.5
-    result[brow_mask_bool] = median_blurred[brow_mask_bool]
-    return result
-
-
-def _seamless_clone_components(src: np.ndarray, dst: np.ndarray,
-                               mask_u8: np.ndarray) -> np.ndarray:
-    """連結成分（左右の眉）ごとに seamlessClone を適用"""
-    num_labels, labels = cv2.connectedComponents(mask_u8)
-    cloned = dst.copy()
-    for label_id in range(1, num_labels):
-        comp = (labels == label_id).astype(np.uint8) * 255
-        ys, xs = np.where(comp > 0)
-        if len(ys) == 0:
-            continue
-        cy = int((ys.min() + ys.max()) / 2)
-        cx = int((xs.min() + xs.max()) / 2)
-        try:
-            cloned = cv2.seamlessClone(src, cloned, comp, (cx, cy), cv2.NORMAL_CLONE)
-        except cv2.error:
-            alpha = (comp.astype(np.float32) / 255.0)[..., np.newaxis]
-            cloned = (cloned.astype(np.float32) * (1 - alpha) +
-                      src.astype(np.float32) * alpha).astype(np.uint8)
-    return cloned
-
-
 def erase_eyebrows(
     image: np.ndarray,
     fm: FaceMesh,
     blur_scale: float = 1.0,
 ) -> np.ndarray:
-    """眉を消す（pre-fill + cv2.inpaint TELEA + seamlessClone 方式）
+    """眉を消す（シンプル: cv2.inpaint TELEA のみ）
+
+    各種手法の比較の結果、シンプルなTELEAインペイント（大きめradius）が最も自然。
+    pre-fillやseamlessCloneを足すと過度な加工感が出てしまうので、TELEAに任せる。
 
     手順:
-    1. ランドマークからタイトなポリゴンマスク生成 + 拡張
-    2. 眉領域を局所肌色で事前置換（暗い眉色の伝播を防ぐ）
-    3. cv2.inpaint TELEA でテクスチャ補完
-    4. cv2.seamlessClone で周辺の色味・ライティングに自動マッチ
-    5. フェザーマスクで境界をなめらかに合成
+    1. ランドマークからタイトなポリゴンマスク生成 + 少し拡張
+    2. cv2.inpaint TELEA（顔サイズに比例した大きめradius）で補完
     """
     h, w = image.shape[:2]
 
@@ -153,34 +106,11 @@ def erase_eyebrows(
     brow_mask = build_eyebrow_polygon_mask(fm, w, h, expand_px=expand_px)
     mask_u8 = (brow_mask * 255).astype(np.uint8)
 
-    # 2. medianBlurで眉を溶かして事前置換（暗い眉色の伝播を防ぐ）
-    prefilled = build_skin_prefill(image, brow_mask, face_h)
+    # 2. TELEAインペイント（radius大きめで眉全体を自然に埋める）
+    inpaint_radius = max(15, int(face_h * 0.04))
+    result = cv2.inpaint(image, mask_u8, inpaint_radius, cv2.INPAINT_TELEA)
 
-    # 3. TELEA で自然なテクスチャ補完
-    inpaint_radius = max(8, int(face_h * 0.025))
-    inpainted = cv2.inpaint(prefilled, mask_u8, inpaint_radius, cv2.INPAINT_TELEA)
-
-    # 4. seamlessClone で周辺の色味にマッチ
-    erode_k = max(2, expand_px // 2)
-    erode_kernel = cv2.getStructuringElement(
-        cv2.MORPH_ELLIPSE, (erode_k * 2 + 1, erode_k * 2 + 1)
-    )
-    clone_mask = cv2.erode(mask_u8, erode_kernel, iterations=1)
-    cloned = _seamless_clone_components(inpainted, image, clone_mask)
-
-    # 5. 中央は完全置換、外周のみフェザー
-    blur_ksize = max(11, int(face_h * 0.05 * blur_scale))
-    feather_dilate = blur_ksize // 2 + 4
-    feather_kernel = cv2.getStructuringElement(
-        cv2.MORPH_ELLIPSE, (feather_dilate * 2 + 1, feather_dilate * 2 + 1)
-    )
-    expanded_mask = cv2.dilate(brow_mask, feather_kernel, iterations=1)
-    soft_mask = gaussian_blur_mask(expanded_mask, blur_ksize)
-    soft_mask = gaussian_blur_mask(soft_mask, blur_ksize)
-
-    alpha = soft_mask[..., np.newaxis]
-    result = image.astype(np.float32) * (1.0 - alpha) + cloned.astype(np.float32) * alpha
-    return np.clip(result, 0, 255).astype(np.uint8)
+    return result
 
 
 def crop_eyebrow_region(image: np.ndarray, fm: FaceMesh, margin_ratio: float = 0.4):
