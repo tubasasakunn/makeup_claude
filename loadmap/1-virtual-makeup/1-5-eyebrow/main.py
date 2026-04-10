@@ -200,9 +200,9 @@ def compute_brow_anchors(fm: FaceMesh, side: str = "right") -> dict:
     """眉の基準点（眉頭・眉尻）と関連値を計算
 
     ルール:
-    - 眉頭: 小鼻外縁の真上、眉のセンターライン上
-    - 眉尻: 小鼻-目尻を結ぶ直線の延長上、眉頭と同じY座標
-    - 眉のセンターライン Y: eye_top - eye_height * 1.86 (実測ベース)
+    - 眉頭: 実際の眉頭ランドマーク位置を使用（小鼻ルールより正確）
+    - 眉尻: 小鼻-目尻延長の黄金比ルール と 実際のランドマーク の広い方を採用
+    - 眉のセンターラインY: 実測ベースで元眉位置に合わせる
     """
     if side == "right":
         nose_wing = fm.landmarks_px[64].astype(float)
@@ -210,31 +210,40 @@ def compute_brow_anchors(fm: FaceMesh, side: str = "right") -> dict:
         outer_eye = fm.landmarks_px[33].astype(float)
         eye_top = fm.landmarks_px[159].astype(float)
         eye_bot = fm.landmarks_px[145].astype(float)
+        brow_head_lm = fm.landmarks_px[55].astype(float)   # 実際の眉頭
+        brow_tail_lm = fm.landmarks_px[46].astype(float)    # 実際の眉尻
     else:
         nose_wing = fm.landmarks_px[294].astype(float)
         inner_eye = fm.landmarks_px[362].astype(float)
         outer_eye = fm.landmarks_px[263].astype(float)
         eye_top = fm.landmarks_px[386].astype(float)
         eye_bot = fm.landmarks_px[374].astype(float)
+        brow_head_lm = fm.landmarks_px[285].astype(float)
+        brow_tail_lm = fm.landmarks_px[276].astype(float)
 
     eye_height = abs(eye_top[1] - eye_bot[1])
 
-    # 眉頭: 小鼻外縁の真上、眉センターラインの高さ
-    # 元眉のセンター位置 (eye_top - eye_h * 1.86) に合わせて配置
-    # こうすることで元眉と新眉の位置がズレず、二重眉にならない
-    head_x = nose_wing[0]
+    # 眉頭: 実際のランドマーク位置を使用（小鼻真上より正確）
+    head_x = brow_head_lm[0]
     head_y = eye_top[1] - eye_height * 1.85
 
-    # 眉尻: 小鼻-目尻の延長線上で Y == head_y となる点
+    # 眉尻: 黄金比ルール（小鼻-目尻延長）と実際のランドマークの広い方
     dx = outer_eye[0] - nose_wing[0]
     dy = outer_eye[1] - nose_wing[1]
     if abs(dy) < 1e-3:
-        tail_x = outer_eye[0] + (outer_eye[0] - inner_eye[0]) * 0.3
-        tail_y = head_y
+        golden_tail_x = outer_eye[0] + (outer_eye[0] - inner_eye[0]) * 0.3
     else:
         t = (head_y - nose_wing[1]) / dy
-        tail_x = nose_wing[0] + t * dx
-        tail_y = head_y
+        golden_tail_x = nose_wing[0] + t * dx
+
+    # 実際のランドマーク位置と黄金比のうち、より外側を採用
+    if side == "right":
+        # 右眉: X小 = 外側
+        tail_x = min(golden_tail_x, brow_tail_lm[0])
+    else:
+        # 左眉: X大 = 外側
+        tail_x = max(golden_tail_x, brow_tail_lm[0])
+    tail_y = head_y
 
     return {
         "head": np.array([head_x, head_y], dtype=np.float64),
