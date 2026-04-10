@@ -265,36 +265,94 @@ def _solve_bezier_control(p0: np.ndarray, pm: np.ndarray, p2: np.ndarray,
     return (pm - (1 - t) ** 2 * p0 - t ** 2 * p2) / (2 * (1 - t) * t)
 
 
-def _taper(t: float) -> float:
-    """眉の太さをtで調整（眉頭・眉尻が細くなる自然な形）
+# タイプごとに先端の尖り度を制御
+SHARP_BROW_TYPES = {"angular", "arch", "long_arch", "natural_arch"}
 
-    滑らかなコサインベースのテーパー（折れ線だとカクつく）
-    t=0(頭): 0.55倍
-    t=0.35: 1.0倍（最大）
-    t=1(尻): 0.45倍
+
+def _catmull_rom_centerline(head: np.ndarray, peak: np.ndarray, tail: np.ndarray,
+                            peak_t: float, n: int = 100) -> np.ndarray:
+    """5制御点 + Catmull-Romスプラインで滑らかな中心線を生成
+
+    制御点: [仮想前, head, peak, peak_mid, tail, 仮想後]
     """
-    # コサインで滑らかに: t=0→0.55, t=0.35→1.0, t=1→0.45
+    peak_mid_x = peak[0] + (tail[0] - peak[0]) * 0.5
+    peak_mid_y = (peak[1] + tail[1]) / 2
+    peak_mid = np.array([peak_mid_x, peak_mid_y])
+
+    # 仮想前点: head の手前に head→peak と対称な点
+    v_pre = head - (peak - head) * 0.3
+    # 仮想後点: tail の後ろ
+    v_post = tail + (tail - peak_mid) * 0.3
+
+    cps = [v_pre, head, peak, peak_mid, tail, v_post]
+
+    def segment(p0, p1, p2, p3, n_pts):
+        ts = np.linspace(0, 1, n_pts)
+        pts = []
+        for t in ts:
+            t2 = t * t
+            t3 = t2 * t
+            pt = 0.5 * (
+                (2 * p1) +
+                (-p0 + p2) * t +
+                (2 * p0 - 5 * p1 + 4 * p2 - p3) * t2 +
+                (-p0 + 3 * p1 - 3 * p2 + p3) * t3
+            )
+            pts.append(pt)
+        return np.array(pts)
+
+    # 3区間を均等サンプリング
+    n_per_seg = n // 3 + 1
+    segments = []
+    for i in range(len(cps) - 3):
+        seg = segment(*cps[i:i + 4], n_pts=n_per_seg)
+        segments.append(seg if i == 0 else seg[1:])
+    center_line = np.vstack(segments)
+    # 最終的に n 点にリサンプル
+    if len(center_line) != n:
+        idx = np.linspace(0, len(center_line) - 1, n).astype(int)
+        center_line = center_line[idx]
+    return center_line
+
+
+def _taper(t: float, sharp: bool = False) -> float:
+    """眉の太さを t で調整
+
+    sharp: True の場合、85%までほぼ幅を保ち、最後の15%で急降下して
+          キリッと尖らせる (2段階テーパー)
+    sharp: False の場合、終端 0.35 で丸く留める (rounded)
+    """
     import math
-    if t < 0.35:
-        # 0..0.35 で cos(0..π/2) の逆 → 0.55 → 1.0
-        x = t / 0.35
-        return 0.55 + 0.45 * (1 - math.cos(x * math.pi / 2))
+    if t < 0.3:
+        # 眉頭: 0.6 → 1.0
+        x = t / 0.3
+        return 0.6 + 0.4 * (1 - math.cos(x * math.pi / 2))
+
+    if sharp:
+        # sharp: 30-90% で 1.0 → 0.7 で緩やかに、90-100% で ease-out で 0 へ
+        if t < 0.9:
+            x = (t - 0.3) / 0.6  # 0..1
+            return 1.0 - x * 0.3
+        else:
+            x = min(1.0, max(0.0, (t - 0.9) / 0.1))  # 0..1
+            # ease-out: 0.7 → 0 だが、 98% まで 0.2 程度残す
+            return 0.7 * (1 - x ** 0.5)
     else:
-        # 0.35..1 で cos(0..π/2) → 1.0 → 0.45
-        x = (t - 0.35) / 0.65
-        return 0.45 + 0.55 * math.cos(x * math.pi / 2)
+        # rounded: 30-90% で 1.0 → 0.35、90-100% で 0.35 → 0.1 （欠け感解消）
+        if t < 0.9:
+            x = (t - 0.3) / 0.6  # 0..1
+            return 1.0 - x * 0.65
+        else:
+            x = min(1.0, max(0.0, (t - 0.9) / 0.1))
+            return 0.35 * (1 - x) + 0.1 * x
 
 
 def generate_brow_polygon(anchors: dict, brow_type: str) -> np.ndarray:
     """眉タイプに応じた上下ラインを生成してポリゴン頂点列を返す
 
-    アプローチ:
-    1. センターラインを二次Bezier曲線で生成 (100点サンプリング)
-    2. 各点での接線方向を計算し、その法線（垂直方向）に±thickness/2オフセット
-       → 曲線に沿って自然に厚みが付き、カクカクしない
-    3. taper（コサインベース）で先端を滑らかに細く
-
-    返り値: (N*2, 2) のint32配列（上辺N点 + 下辺N点逆順）
+    - Catmull-Romスプラインで滑らかなセンターライン
+    - 接線→法線方向にオフセットで自然な厚み
+    - タイプ別テーパー: sharp なタイプは先端 0 収束、rounded は丸留め
     """
     params = EYEBROW_TYPES[brow_type]
 
@@ -302,53 +360,49 @@ def generate_brow_polygon(anchors: dict, brow_type: str) -> np.ndarray:
     tail = anchors["tail"].copy()
     eye_h = anchors["eye_height"]
 
-    # 長さ調整
     length_ratio = params["length_ratio"]
     if length_ratio != 1.0:
         tail = head + (tail - head) * length_ratio
 
-    # 眉尻の高さ調整（センターを下げる）
     tail[1] += eye_h * params["tail_height_ratio"]
 
-    # 眉山: センターラインの上
     peak_t = params["peak_position"]
     peak_x = head[0] + (tail[0] - head[0]) * peak_t
     peak_y = head[1] - eye_h * params["peak_height_ratio"]
     peak = np.array([peak_x, peak_y])
 
-    # センターライン（Bezier曲線、高解像度サンプリング）
-    n = 100
-    p1 = _solve_bezier_control(head, peak, tail, peak_t)
-    center_line = _quadratic_bezier(head, p1, tail, n=n)
+    # Catmull-Romで滑らかなセンターライン
+    n = 120
+    center_line = _catmull_rom_centerline(head, peak, tail, peak_t, n=n)
 
-    # 太さ
     base_thickness = eye_h * params["thickness_ratio"]
 
-    # 各点の接線方向を計算（有限差分）→ 法線を求める
-    # 端点は片側差分、中間は中央差分
+    # 接線→法線
     tangents = np.zeros_like(center_line)
     tangents[0] = center_line[1] - center_line[0]
     tangents[-1] = center_line[-1] - center_line[-2]
     tangents[1:-1] = (center_line[2:] - center_line[:-2]) / 2
-
-    # 正規化
     lengths = np.linalg.norm(tangents, axis=1, keepdims=True)
     lengths = np.maximum(lengths, 1e-6)
     tangents /= lengths
-
-    # 法線 = 接線を90度回転 (x,y) -> (-y,x)
     normals = np.stack([-tangents[:, 1], tangents[:, 0]], axis=1)
 
-    # 各点で法線方向に ±half_thickness * taper
+    # タイプ別テーパー
+    sharp = brow_type in SHARP_BROW_TYPES
+
     ts = np.linspace(0, 1, n)
     upper = np.zeros_like(center_line)
     lower = np.zeros_like(center_line)
     for i, t in enumerate(ts):
-        half_thick = base_thickness * 0.5 * _taper(t)
-        upper[i] = center_line[i] - normals[i] * half_thick  # 上(法線反対側)
-        lower[i] = center_line[i] + normals[i] * half_thick  # 下(法線側)
+        half_thick = base_thickness * 0.5 * _taper(t, sharp=sharp)
+        upper[i] = center_line[i] - normals[i] * half_thick
+        lower[i] = center_line[i] + normals[i] * half_thick
 
-    # ポリゴン頂点列
+    # sharp タイプは先端を1点に完全収束
+    if sharp:
+        upper[-1] = center_line[-1]
+        lower[-1] = center_line[-1]
+
     polygon = np.vstack([upper, lower[::-1]])
     return polygon.astype(np.int32)
 
