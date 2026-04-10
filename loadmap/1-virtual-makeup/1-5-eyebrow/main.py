@@ -111,7 +111,8 @@ def erase_eyebrows(
     face_h = np.linalg.norm(
         fm.landmarks_px[10].astype(float) - fm.landmarks_px[152].astype(float)
     )
-    expand_px = max(3, int(face_h * 0.015))
+    # 眉消しは強めに拡張（元眉を確実にカバー、二重眉を防止）
+    expand_px = max(5, int(face_h * 0.025))
 
     # 1. ポリゴンマスク生成
     brow_mask = build_eyebrow_polygon_mask(fm, w, h, expand_px=expand_px)
@@ -133,66 +134,66 @@ def erase_eyebrows(
 EYEBROW_TYPES = {
     "straight": {
         "peak_position": 0.5,
-        "peak_height_ratio": 0.05,
+        "peak_height_ratio": 0.04,
         "tail_height_ratio": 0.0,
-        "thickness_ratio": 1.3,
+        "thickness_ratio": 1.05,
         "length_ratio": 0.95,
         "desc": "ストレート眉（若々しい・韓流）",
     },
     "parallel_thick": {
         "peak_position": 0.55,
-        "peak_height_ratio": 0.08,
+        "peak_height_ratio": 0.07,
         "tail_height_ratio": 0.0,
-        "thickness_ratio": 1.5,
+        "thickness_ratio": 1.2,
         "length_ratio": 1.0,
         "desc": "並行太眉（ナチュラル・男らしい）",
     },
     "natural_arch": {
-        "peak_position": 0.6,
-        "peak_height_ratio": 0.3,
-        "tail_height_ratio": 0.05,
-        "thickness_ratio": 1.4,
+        "peak_position": 0.62,
+        "peak_height_ratio": 0.13,
+        "tail_height_ratio": 0.0,
+        "thickness_ratio": 0.95,
         "length_ratio": 1.0,
         "desc": "ナチュラルアーチ（知的・バランス）",
     },
     "arch": {
         "peak_position": 0.65,
-        "peak_height_ratio": 0.35,
-        "tail_height_ratio": 0.08,
-        "thickness_ratio": 1.5,
+        "peak_height_ratio": 0.18,
+        "tail_height_ratio": 0.02,
+        "thickness_ratio": 0.95,
         "length_ratio": 1.0,
         "desc": "アーチ眉（上品・標準）",
     },
     "angular": {
         "peak_position": 0.65,
-        "peak_height_ratio": 0.42,
-        "tail_height_ratio": 0.14,
-        "thickness_ratio": 1.5,
+        "peak_height_ratio": 0.25,
+        "tail_height_ratio": 0.05,
+        "thickness_ratio": 0.95,
         "length_ratio": 1.0,
         "desc": "角度眉（シャープ・クール）",
     },
     "short_thick": {
         "peak_position": 0.5,
-        "peak_height_ratio": 0.08,
+        "peak_height_ratio": 0.06,
         "tail_height_ratio": 0.0,
-        "thickness_ratio": 1.65,
-        "length_ratio": 0.82,
+        "thickness_ratio": 1.25,
+        "length_ratio": 0.85,
         "desc": "短め太眉（ワイルド・強い）",
     },
     "long_arch": {
         "peak_position": 0.68,
-        "peak_height_ratio": 0.3,
-        "tail_height_ratio": 0.1,
-        "thickness_ratio": 1.3,
-        "length_ratio": 1.02,
+        "peak_height_ratio": 0.15,
+        "tail_height_ratio": 0.03,
+        "thickness_ratio": 0.88,
+        "length_ratio": 1.05,
         "desc": "長めアーチ（大人・クール）",
     },
 }
 
-# デフォルト設定
+# デフォルト設定（プロのガイドライン準拠: 男性眉は目の縦幅の50-66%の太さが理想）
 DEFAULT_EYEBROW_TYPE = "natural_arch"
-DEFAULT_EYEBROW_COLOR_RGB = (85, 60, 45)  # ミディアムブラウン（暗すぎない）
-DEFAULT_EYEBROW_INTENSITY = 0.5           # シャドウと同じくらいソフトに
+DEFAULT_EYEBROW_COLOR_RGB = (110, 85, 65)  # ナチュラルブラウン（明るめ）
+DEFAULT_EYEBROW_INTENSITY = 0.55           # 適度な濃さ
 
 
 def compute_brow_anchors(fm: FaceMesh, side: str = "right") -> dict:
@@ -219,9 +220,10 @@ def compute_brow_anchors(fm: FaceMesh, side: str = "right") -> dict:
     eye_height = abs(eye_top[1] - eye_bot[1])
 
     # 眉頭: 小鼻外縁の真上、眉センターラインの高さ
-    # 実測は 1.86 だが、やや上に寄せて自然な眉骨ラインに
+    # 元眉のセンター位置 (eye_top - eye_h * 1.86) に合わせて配置
+    # こうすることで元眉と新眉の位置がズレず、二重眉にならない
     head_x = nose_wing[0]
-    head_y = eye_top[1] - eye_height * 1.95
+    head_y = eye_top[1] - eye_height * 1.85
 
     # 眉尻: 小鼻-目尻の延長線上で Y == head_y となる点
     dx = outer_eye[0] - nose_wing[0]
@@ -472,11 +474,12 @@ def _make_soft_density(mask: np.ndarray, face_h: float, blur_scale: float,
 
 
 def _apply_density_gradient(mask: np.ndarray, fm: FaceMesh,
-                            head_fade: float = 0.2, tail_fade: float = 0.3) -> np.ndarray:
+                            head_fade: float = 0.3, tail_fade: float = 0.25) -> np.ndarray:
     """マスクに眉頭/眉尻のフェードを適用
 
     眉頭（head）は head_fade の範囲で薄く、
     眉尻（tail）は tail_fade の範囲で薄くフェード。
+    プロガイドライン: 眉頭は薄くぼかし、眉尻は眉頭の1/3の太さ
     """
     h, w = mask.shape[:2]
     result = mask.copy()
@@ -508,18 +511,19 @@ def _apply_density_gradient(mask: np.ndarray, fm: FaceMesh,
         if not in_range.any():
             continue
 
-        # フェード係数を計算
+        # フェード係数を計算（プロ基準: 眉頭は薄く、眉尻も薄く）
         fade = np.ones_like(t)
-        # 眉頭フェード (t < head_fade で薄く)
+        # 眉頭フェード: 0% → 40%密度、head_fade で 100% に
         head_mask = t < head_fade
         if head_mask.any():
-            fade[head_mask] = 0.6 + 0.4 * (t[head_mask] / head_fade)
-        # 眉尻フェード (t > 1 - tail_fade で薄く)
+            x = t[head_mask] / head_fade  # 0..1
+            fade[head_mask] = 0.35 + 0.65 * x
+        # 眉尻フェード: tail_start で 100% → 末端で 25%
         tail_start = 1.0 - tail_fade
         tail_mask = t > tail_start
         if tail_mask.any():
-            fade[tail_mask] = 0.3 + 0.7 * (1 - (t[tail_mask] - tail_start) / tail_fade)
-            fade[tail_mask] = np.clip(fade[tail_mask], 0.3, 1.0)
+            x = (t[tail_mask] - tail_start) / tail_fade  # 0..1
+            fade[tail_mask] = 1.0 - x * 0.75  # 1.0 → 0.25
 
         # 軸外は変更なし
         fade[~in_range] = 1.0
