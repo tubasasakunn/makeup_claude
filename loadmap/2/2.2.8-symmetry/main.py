@@ -31,11 +31,14 @@ sys.path.insert(0, str(ROOT / "loadmap"))
 from shared.facemesh import FaceMesh
 from shared.face_metrics import (
     LM,
-    draw_line,
-    draw_point,
+    compose_report,
+    draw_line_outlined,
+    draw_pil_pill,
+    draw_pil_text,
+    draw_point_outlined,
     make_side_by_side,
     measure,
-    put_label,
+    render_report_panel,
 )
 
 # 各サブセクションをインポート
@@ -248,43 +251,115 @@ def analyze(fm: FaceMesh) -> SymmetryResult:
 
 
 # ==============================================================
-# 可視化
+# 可視化 (UI/UX 改善版: レポートパネル + annotate 分離)
 # ==============================================================
-def visualize(image: np.ndarray, fm: FaceMesh, r: SymmetryResult) -> np.ndarray:
-    img = image.copy()
+C_VERT_AXIS = (200, 140, 255)   # 顔中央縦線 マゼンタ
+C_CHEEK = (80, 220, 255)        # 頬対称 アンバー
+C_JAW = (255, 200, 80)          # ジョーライン シアン
+C_CHEEK_REF1 = (140, 255, 160)  # 小鼻→輪郭 緑
+C_CHEEK_REF2 = (80, 180, 255)   # 黒目→輪郭 オレンジ
+
+
+def _golden_color(score: float) -> tuple:
+    if score >= 85:
+        return (140, 255, 160)
+    if score >= 75:
+        return (80, 220, 255)
+    if score >= 65:
+        return (80, 180, 255)
+    return (200, 140, 255)
+
+
+def annotate_face(image: np.ndarray, fm: FaceMesh, r: SymmetryResult,
+                  scale: float = 1.0) -> np.ndarray:
+    if scale != 1.0:
+        img = cv2.resize(
+            image, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC,
+        )
+    else:
+        img = image.copy()
     h, w = img.shape[:2]
 
+    def S(p):
+        return (float(p[0]) * scale, float(p[1]) * scale)
+
+    nose = S(fm.landmarks_px[LM.NOSE_TIP])
+    cr = S(fm.landmarks_px[LM.CHEEKBONE_R])
+    cl = S(fm.landmarks_px[LM.CHEEKBONE_L])
+    gr = S(fm.landmarks_px[LM.GONION_R])
+    gl = S(fm.landmarks_px[LM.GONION_L])
+    chin = S(fm.landmarks_px[LM.CHIN_BOTTOM])
+    nose_r = S(fm.landmarks_px[LM.NOSE_WING_R])
+    iris_r_c_raw = np.mean([fm.landmarks_px[i] for i in LM.IRIS_R], axis=0)
+    iris_r_c = S(iris_r_c_raw)
+
+    lw = max(2, int(2 * scale))
+    lw_strong = max(3, int(3 * scale))
+    pt_r = max(3, int(4 * scale))
+
     # 顔中央縦線
-    nose = fm.landmarks_px[LM.NOSE_TIP]
-    draw_line(img, (int(nose[0]), 0), (int(nose[0]), h), (255, 100, 100), 1)
-
-    # 輪郭対称線
-    cr = fm.landmarks_px[LM.CHEEKBONE_R]
-    cl = fm.landmarks_px[LM.CHEEKBONE_L]
-    draw_line(img, cr, cl, (100, 200, 255), 1)
-
+    draw_line_outlined(
+        img, (nose[0], 0), (nose[0], h), C_VERT_AXIS, thickness=lw,
+    )
+    # 頬対称
+    draw_line_outlined(img, cr, cl, C_CHEEK, thickness=lw)
     # ジョーライン
-    gr = fm.landmarks_px[LM.GONION_R]
-    gl = fm.landmarks_px[LM.GONION_L]
-    chin = fm.landmarks_px[LM.CHIN_BOTTOM]
-    draw_line(img, gr, chin, (255, 200, 0), 2)
-    draw_line(img, gl, chin, (255, 200, 0), 2)
+    draw_line_outlined(img, gr, chin, C_JAW, thickness=lw_strong)
+    draw_line_outlined(img, gl, chin, C_JAW, thickness=lw_strong)
+    # 頬黄金比基準
+    draw_line_outlined(img, nose_r, gr, C_CHEEK_REF1, thickness=lw)
+    draw_line_outlined(img, iris_r_c, gr, C_CHEEK_REF2, thickness=lw)
 
-    # 頬黄金比の基準線
-    nose_r = fm.landmarks_px[LM.NOSE_WING_R]
-    iris_r_c = np.mean([fm.landmarks_px[i] for i in LM.IRIS_R], axis=0)
-    draw_line(img, nose_r, gr, (180, 180, 255), 1)
-    draw_line(img, (int(iris_r_c[0]), int(iris_r_c[1])), gr, (255, 100, 255), 1)
+    for p, col in [(cr, C_CHEEK), (cl, C_CHEEK),
+                   (gr, C_JAW), (gl, C_JAW), (chin, C_JAW)]:
+        draw_point_outlined(img, p, col, r=pt_r)
 
-    # パネル
-    panel_w = int(w * 0.55)
-    panel_h = int(h * 0.52)
-    panel = np.zeros((panel_h, panel_w, 3), dtype=np.uint8)
-    panel[:] = (32, 32, 32)
-    put_label(panel, "2.2.8 OVERALL GOLDEN SCORE",
-              (10, 22), color=(0, 255, 255), scale=0.55, thickness=2)
-    put_label(panel, f"TOTAL: {r.golden_score:.1f}  [{r.golden_label}]",
-              (10, 42), color=(255, 255, 0), scale=0.55, thickness=2)
+    # 左上ピル
+    pill_color = _golden_color(r.golden_score)
+    pill_text = f"{r.golden_label}".upper()
+    pill_size = int(24 * max(1.0, scale * 0.9))
+    draw_pil_pill(
+        img, pill_text, (18, 18),
+        text_color=(20, 20, 30), pill_color=pill_color, size=pill_size,
+        pad_x=18, pad_y=10, radius=22,
+    )
+
+    # 右上凡例
+    legend_items = [
+        ("中央線", C_VERT_AXIS),
+        ("頬対称", C_CHEEK),
+        ("ジョー", C_JAW),
+        ("小鼻→輪郭", C_CHEEK_REF1),
+        ("黒目→輪郭", C_CHEEK_REF2),
+    ]
+    legend_font = max(14, int(15 * scale))
+    sw_w = int(18 * scale)
+    sw_h = int(14 * scale)
+    row_h = int(26 * scale)
+    lx = w - int(170 * scale)
+    ly = int(20 * scale)
+    cv2.rectangle(
+        img, (lx - 8, ly - 6),
+        (w - 14, ly + row_h * len(legend_items) + 4),
+        (0, 0, 0), -1,
+    )
+    for i, (name, col) in enumerate(legend_items):
+        y_item = ly + i * row_h
+        cv2.rectangle(
+            img, (lx, y_item + 4), (lx + sw_w, y_item + 4 + sw_h), col, -1,
+        )
+        draw_pil_text(
+            img, name, (lx + sw_w + 8, y_item),
+            color=(235, 235, 240), size=legend_font,
+        )
+
+    return img
+
+
+def build_panel(r: SymmetryResult, width: int, height: int) -> np.ndarray:
+    pill_color = _golden_color(r.golden_score)
+    sym_color = (140, 255, 160) if r.overall_sym >= 0.9 else (230, 230, 235)
+    jaw_color = (140, 255, 160) if r.jaw_line_sharpness >= 0.7 else (230, 230, 235)
 
     sk = r.sub_results["skeletal"]
     fr = r.sub_results["face_ratio"]
@@ -295,31 +370,91 @@ def visualize(image: np.ndarray, fm: FaceMesh, r: SymmetryResult) -> np.ndarray:
     mr = r.sub_results["mouth"]
     br = r.sub_results["eyebrow"]
 
-    lines = [
-        f"2.1  skeletal   : {sk.type}",
-        f"2.2.1 face      : aspect={fr.aspect:.2f} closest={fr.closest_ratio}",
-        f"2.2.2 vertical  : {vr.category}",
-        f"2.2.3 horizontal: gap={hr.eye_gap_ratio:.2f} [{hr.category}]",
-        f"2.2.4 eye       : h/w={er.mean_width_ratio:.3f} sym={er.symmetry_score*100:.0f}%",
-        f"2.2.5 nose      : wing/gap={nr.wing_to_gap_ratio:.2f} [{nr.overall}]",
-        f"2.2.6 mouth     : lip={mr.lip_ratio:.2f} [{mr.overall}]",
-        f"2.2.7 eyebrow   : sym={br.symmetry_score*100:.0f}% [{br.category}]",
-        f"",
-        f"eye sym         : {r.eye_sym*100:.1f}%",
-        f"brow sym        : {r.brow_sym*100:.1f}%",
-        f"contour sym     : {r.face_contour_sym*100:.1f}%",
-        f"OVERALL SYM     : {r.overall_sym*100:.1f}%",
-        f"jaw sharpness   : {r.jaw_line_sharpness*100:.1f}%",
-        f"cheek ratio R   : {r.cheek_ratio_r:.2f}  L: {r.cheek_ratio_l:.2f}",
+    spec = [
+        ("title", "2.2.8  総合判定", (230, 230, 230)),
+        ("subtitle", "Overall Golden Symmetry"),
+        ("divider",),
+        ("spacer", 4),
+        ("section", "判定結果"),
+        ("big", f"{r.golden_score:.0f}", pill_color),
+        ("text", r.golden_label, (210, 210, 215)),
+        ("spacer", 6),
+        ("section", "対称性"),
+        ("kv", "eye sym", f"{r.eye_sym*100:.1f} %"),
+        ("kv", "brow sym", f"{r.brow_sym*100:.1f} %"),
+        ("kv", "contour sym", f"{r.face_contour_sym*100:.1f} %"),
+        ("kv", "OVERALL sym", f"{r.overall_sym*100:.1f} %", sym_color),
+        ("kv", "jaw sharpness", f"{r.jaw_line_sharpness*100:.1f} %", jaw_color),
+        ("spacer", 6),
+        ("section", "サブ結果"),
+        ("kv", "2.1 skeletal", sk.type),
+        ("kv", "2.2.1 face", fr.closest_ratio),
+        ("kv", "2.2.2 vert", vr.closest),
+        ("kv", "2.2.3 horiz", hr.category.split(" ")[0]),
+        ("kv", "2.2.4 eye", er.category),
+        ("kv", "2.2.5 nose", nr.overall),
+        ("kv", "2.2.6 mouth", mr.overall),
+        ("kv", "2.2.7 brow", br.category.split(" ")[0]),
+        ("spacer", 6),
+        ("section", "8 軸スコア レーダー"),
     ]
-    for i, line in enumerate(lines):
-        put_label(panel, line, (10, 66 + i * 15), scale=0.38)
 
-    y0 = h - panel_h - 10
-    x0 = 10
-    if y0 >= 0 and x0 + panel_w <= w:
-        img[y0:y0 + panel_h, x0:x0 + panel_w] = panel
-    return img
+    # 8軸レーダー: 各サブセクションのキー指標を 0-1 正規化
+    def _safe(v: float, lo: float, hi: float) -> float:
+        return max(0.0, min(1.0, (v - lo) / (hi - lo + 1e-9)))
+
+    # 2.1 skeletal: 1位スコアを (0.5..1.0) で
+    sk_val = max(sk.scores.values()) if sk.scores else 0.0
+    skel_score = _safe(sk_val, 0.4, 1.0)
+    # 2.2.1 face_ratio: closest loss が小さいほど高得点
+    fr_loss = fr.losses.get(fr.closest_ratio, 0.5)
+    face_score = max(0.0, 1.0 - fr_loss * 5.0)
+    # 2.2.2 vertical
+    vert_score = max(0.0, 1.0 - min(vr.traditional_loss, vr.reiwa_loss) * 4.0)
+    # 2.2.3 horizontal
+    horiz_score = max(0.0, 1.0 - min(hr.ideal_loss_1, hr.jp_loss) * 2.5)
+    # 2.2.4 eye: symmetry
+    eye_score = er.symmetry_score
+    # 2.2.5 nose: 1 - mean of losses
+    nose_score = max(
+        0.0,
+        1.0 - (nr.wing_loss + nr.length_loss) / 2,
+    )
+    # 2.2.6 mouth: ratio similarity to ideal lip 1.75
+    mouth_score = max(
+        0.0,
+        1.0 - abs(mr.lip_ratio - 1.75) / 1.75,
+    )
+    # 2.2.7 eyebrow: symmetry
+    brow_score = br.symmetry_score
+
+    radar_labels = [
+        "skel", "face", "vert", "horiz",
+        "eye", "nose", "mouth", "brow",
+    ]
+    radar_vals = [
+        skel_score, face_score, vert_score, horiz_score,
+        eye_score, nose_score, mouth_score, brow_score,
+    ]
+    spec.append(("radar", radar_labels, radar_vals, None, pill_color))
+
+    return render_report_panel(spec, width, height)
+
+
+def build_report(image: np.ndarray, fm: FaceMesh,
+                 r: SymmetryResult) -> np.ndarray:
+    scale = 1.5
+    src_big = cv2.resize(
+        image, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC,
+    )
+    ann_big = annotate_face(image, fm, r, scale=scale)
+    panel = build_panel(r, 620, src_big.shape[0])
+    return compose_report(src_big, ann_big, panel)
+
+
+# 後方互換
+def visualize(image: np.ndarray, fm: FaceMesh, r: SymmetryResult) -> np.ndarray:
+    return annotate_face(image, fm, r, scale=1.0)
 
 
 def run_one(image_path: Path, output_path=None, imgonly=False, as_json=False):
@@ -334,9 +469,11 @@ def run_one(image_path: Path, output_path=None, imgonly=False, as_json=False):
     print(f"overall sym: {r.overall_sym*100:.1f}%  jaw: {r.jaw_line_sharpness*100:.1f}%")
     if as_json:
         print(json.dumps(r.to_dict(), indent=2, ensure_ascii=False, default=str))
-    vis = visualize(image, fm, r)
     out = output_path or image_path.parent / f"symmetry_{image_path.stem}.png"
-    cv2.imwrite(str(out), vis if imgonly else make_side_by_side(image, vis))
+    if imgonly:
+        cv2.imwrite(str(out), annotate_face(image, fm, r))
+    else:
+        cv2.imwrite(str(out), build_report(image, fm, r))
     print(f"出力: {out}")
     return r
 

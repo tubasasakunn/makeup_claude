@@ -31,11 +31,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 from shared.facemesh import FaceMesh
 from shared.face_metrics import (
     LM,
-    draw_line,
-    draw_point,
+    compose_report,
+    draw_line_outlined,
+    draw_pil_pill,
+    draw_pil_text,
+    draw_point_outlined,
     make_side_by_side,
     measure,
-    put_label,
+    render_report_panel,
 )
 
 
@@ -153,63 +156,167 @@ def analyze(fm: FaceMesh) -> EyeResult:
 
 
 # ==============================================================
-# 可視化
+# 可視化 (UI/UX 改善版: レポートパネル + annotate 分離)
 # ==============================================================
-def visualize(image: np.ndarray, fm: FaceMesh, r: EyeResult) -> np.ndarray:
-    img = image.copy()
+C_W = (80, 220, 255)       # 横幅 アンバー
+C_H = (255, 200, 80)       # 縦幅 シアン
+C_IRIS = (140, 255, 160)   # 虹彩 緑
+
+CATEGORY_COLOR = {
+    "Big-Round Eyes": (200, 140, 255),
+    "Narrow Eyes": (80, 180, 255),
+    "Balanced": (140, 255, 160),
+}
+
+
+def annotate_face(image: np.ndarray, fm: FaceMesh, r: EyeResult,
+                  scale: float = 1.0) -> np.ndarray:
+    if scale != 1.0:
+        img = cv2.resize(
+            image, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC,
+        )
+    else:
+        img = image.copy()
     h, w = img.shape[:2]
+
+    def S(p):
+        return (float(p[0]) * scale, float(p[1]) * scale)
+
+    lw = max(2, int(2 * scale))
+    pt_r = max(3, int(4 * scale))
 
     for outer, inner, top, bot, iris_ids, side in [
         (LM.EYE_OUTER_R, LM.EYE_INNER_R, LM.EYE_TOP_R, LM.EYE_BOT_R, LM.IRIS_R, r.right),
         (LM.EYE_OUTER_L, LM.EYE_INNER_L, LM.EYE_TOP_L, LM.EYE_BOT_L, LM.IRIS_L, r.left),
     ]:
-        po = fm.landmarks_px[outer]
-        pi = fm.landmarks_px[inner]
-        pt = fm.landmarks_px[top]
-        pb = fm.landmarks_px[bot]
-        # 横幅
-        draw_line(img, po, pi, (0, 255, 255), 2)
-        # 縦幅
-        draw_line(img, pt, pb, (255, 200, 0), 2)
+        po = S(fm.landmarks_px[outer])
+        pi = S(fm.landmarks_px[inner])
+        pt = S(fm.landmarks_px[top])
+        pb = S(fm.landmarks_px[bot])
+
+        draw_line_outlined(img, po, pi, C_W, thickness=lw)
+        draw_line_outlined(img, pt, pb, C_H, thickness=lw)
         for p in (po, pi, pt, pb):
-            draw_point(img, p, (0, 255, 255), 3)
-        # 虹彩の円
+            draw_point_outlined(img, p, C_W, r=pt_r)
+
         ixs = [fm.landmarks_px[i] for i in iris_ids]
-        cx = int(np.mean([p[0] for p in ixs]))
-        cy = int(np.mean([p[1] for p in ixs]))
-        cv2.circle(img, (cx, cy), max(1, int(side.iris_diameter_px / 2)),
-                   (100, 255, 100), 1, cv2.LINE_AA)
+        cx = float(np.mean([p[0] for p in ixs])) * scale
+        cy = float(np.mean([p[1] for p in ixs])) * scale
+        rad = max(1, int(side.iris_diameter_px * scale / 2))
+        cv2.circle(
+            img, (int(cx), int(cy)), rad + 1, (0, 0, 0), 2, cv2.LINE_AA,
+        )
+        cv2.circle(
+            img, (int(cx), int(cy)), rad, C_IRIS, 1, cv2.LINE_AA,
+        )
 
-    # パネル
-    panel_w = int(w * 0.50)
-    panel_h = int(h * 0.42)
-    panel = np.zeros((panel_h, panel_w, 3), dtype=np.uint8)
-    panel[:] = (32, 32, 32)
-    put_label(panel, "2.2.4 EYES", (10, 22), color=(0, 255, 255), scale=0.55, thickness=2)
+    # ラベル: 右目幅
+    label_bg = (20, 20, 25)
+    label_size = max(14, int(15 * scale))
+    po_r = S(fm.landmarks_px[LM.EYE_OUTER_R])
+    pi_r = S(fm.landmarks_px[LM.EYE_INNER_R])
+    draw_pil_text(
+        img, f"R w {r.right.width_px:.0f}",
+        ((po_r[0] + pi_r[0]) / 2 - 22, max(po_r[1], pi_r[1]) + 8),
+        color=C_W, size=label_size, bg=label_bg, bg_alpha=0.78, bg_pad=4,
+    )
+    po_l = S(fm.landmarks_px[LM.EYE_OUTER_L])
+    pi_l = S(fm.landmarks_px[LM.EYE_INNER_L])
+    draw_pil_text(
+        img, f"L w {r.left.width_px:.0f}",
+        ((po_l[0] + pi_l[0]) / 2 - 22, max(po_l[1], pi_l[1]) + 8),
+        color=C_W, size=label_size, bg=label_bg, bg_alpha=0.78, bg_pad=4,
+    )
 
-    lines = [
-        f"R: w={r.right.width_px:5.1f} h={r.right.height_px:5.1f} "
-        f"ratio={r.right.ratio:.3f}",
-        f"   iris={r.right.iris_diameter_px:5.1f}  "
-        f"1:2:1 loss={r.right.iris_loss:.3f}",
-        f"L: w={r.left.width_px:5.1f} h={r.left.height_px:5.1f} "
-        f"ratio={r.left.ratio:.3f}",
-        f"   iris={r.left.iris_diameter_px:5.1f}  "
-        f"1:2:1 loss={r.left.iris_loss:.3f}",
-        f"mean h/w: {r.mean_width_ratio:.3f}  (ideal 0.333)",
-        f"ideal loss: {r.ideal_ratio_loss:.3f}",
-        f"symmetry : {r.symmetry_score*100:.1f}%",
-        f"eye/face : {r.eye_to_face_ratio*100:.1f}%",
-        f"category : {r.category}",
+    # 左上ピル
+    pill_color = CATEGORY_COLOR.get(r.category, (255, 255, 255))
+    pill_text = r.category.upper()
+    pill_size = int(22 * max(1.0, scale * 0.9))
+    draw_pil_pill(
+        img, pill_text, (18, 18),
+        text_color=(20, 20, 30), pill_color=pill_color, size=pill_size,
+        pad_x=18, pad_y=10, radius=22,
+    )
+
+    # 右上凡例
+    legend_items = [
+        ("横幅", C_W),
+        ("縦幅", C_H),
+        ("虹彩", C_IRIS),
     ]
-    for i, line in enumerate(lines):
-        put_label(panel, line, (10, 44 + i * 18), scale=0.42)
+    legend_font = max(14, int(15 * scale))
+    sw_w = int(18 * scale)
+    sw_h = int(14 * scale)
+    row_h = int(26 * scale)
+    lx = w - int(140 * scale)
+    ly = int(20 * scale)
+    cv2.rectangle(
+        img, (lx - 8, ly - 6),
+        (w - 14, ly + row_h * len(legend_items) + 4),
+        (0, 0, 0), -1,
+    )
+    for i, (name, col) in enumerate(legend_items):
+        y_item = ly + i * row_h
+        cv2.rectangle(
+            img, (lx, y_item + 4), (lx + sw_w, y_item + 4 + sw_h), col, -1,
+        )
+        draw_pil_text(
+            img, name, (lx + sw_w + 8, y_item),
+            color=(235, 235, 240), size=legend_font,
+        )
 
-    y0 = h - panel_h - 10
-    x0 = 10
-    if y0 >= 0 and x0 + panel_w <= w:
-        img[y0:y0 + panel_h, x0:x0 + panel_w] = panel
     return img
+
+
+def build_panel(r: EyeResult, width: int, height: int) -> np.ndarray:
+    pill_color = CATEGORY_COLOR.get(r.category, (255, 255, 255))
+    sym_color = (140, 255, 160) if r.symmetry_score >= 0.9 else (230, 230, 235)
+
+    spec = [
+        ("title", "2.2.4  目", (230, 230, 230)),
+        ("subtitle", "Eye Ratio / Iris / Symmetry"),
+        ("divider",),
+        ("spacer", 4),
+        ("section", "判定結果"),
+        ("big", r.category.upper(), pill_color),
+        ("text", f"mean h/w = {r.mean_width_ratio:.3f}  (ideal 0.333)",
+            (210, 210, 215)),
+        ("spacer", 6),
+        ("section", "右目 R"),
+        ("kv", "width / height", f"{r.right.width_px:.0f} / {r.right.height_px:.0f}"),
+        ("kv", "h/w ratio", f"{r.right.ratio:.3f}"),
+        ("kv", "iris 径", f"{r.right.iris_diameter_px:.1f} px"),
+        ("kv", "1:2:1 loss", f"{r.right.iris_loss:.3f}"),
+        ("spacer", 4),
+        ("section", "左目 L"),
+        ("kv", "width / height", f"{r.left.width_px:.0f} / {r.left.height_px:.0f}"),
+        ("kv", "h/w ratio", f"{r.left.ratio:.3f}"),
+        ("kv", "iris 径", f"{r.left.iris_diameter_px:.1f} px"),
+        ("kv", "1:2:1 loss", f"{r.left.iris_loss:.3f}"),
+        ("spacer", 6),
+        ("section", "対称性 / 比率"),
+        ("kv", "symmetry", f"{r.symmetry_score*100:.1f} %", sym_color),
+        ("kv", "eye / face", f"{r.eye_to_face_ratio*100:.1f} %"),
+        ("kv", "ideal loss", f"{r.ideal_ratio_loss:.3f}"),
+    ]
+
+    return render_report_panel(spec, width, height)
+
+
+def build_report(image: np.ndarray, fm: FaceMesh,
+                 r: EyeResult) -> np.ndarray:
+    scale = 1.5
+    src_big = cv2.resize(
+        image, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC,
+    )
+    ann_big = annotate_face(image, fm, r, scale=scale)
+    panel = build_panel(r, 620, src_big.shape[0])
+    return compose_report(src_big, ann_big, panel)
+
+
+# 後方互換
+def visualize(image: np.ndarray, fm: FaceMesh, r: EyeResult) -> np.ndarray:
+    return annotate_face(image, fm, r, scale=1.0)
 
 
 def run_one(image_path: Path, output_path: Path | None = None,
@@ -229,9 +336,11 @@ def run_one(image_path: Path, output_path: Path | None = None,
     print(f"category: {r.category}")
     if as_json:
         print(json.dumps(r.to_dict(), indent=2, ensure_ascii=False))
-    vis = visualize(image, fm, r)
     out = output_path or image_path.parent / f"eye_{image_path.stem}.png"
-    cv2.imwrite(str(out), vis if imgonly else make_side_by_side(image, vis))
+    if imgonly:
+        cv2.imwrite(str(out), annotate_face(image, fm, r))
+    else:
+        cv2.imwrite(str(out), build_report(image, fm, r))
     print(f"出力: {out}")
     return r
 

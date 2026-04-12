@@ -39,10 +39,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 from shared.facemesh import FaceMesh
 from shared.face_metrics import (
     LM,
-    draw_line,
-    draw_point,
+    compose_report,
+    draw_line_outlined,
+    draw_pil_pill,
+    draw_pil_text,
+    draw_point_outlined,
     make_side_by_side,
-    put_label,
+    render_report_panel,
 )
 
 
@@ -146,65 +149,179 @@ def analyze(fm: FaceMesh) -> NoseResult:
 
 
 # ==============================================================
-# 可視化
+# 可視化 (UI/UX 改善版: レポートパネル + annotate 分離)
 # ==============================================================
-def visualize(image: np.ndarray, fm: FaceMesh, r: NoseResult) -> np.ndarray:
-    img = image.copy()
+C_VERT = (80, 220, 255)    # 鼻縦軸 アンバー
+C_WING = (255, 200, 80)    # 小鼻幅 シアン
+C_GAP = (200, 140, 255)    # 目間 マゼンタ
+C_ANGLE = (140, 255, 160)  # 鼻唇角 緑
+C_ELINE = (80, 180, 255)   # E ライン オレンジ
+
+
+def annotate_face(image: np.ndarray, fm: FaceMesh, r: NoseResult,
+                  scale: float = 1.0) -> np.ndarray:
+    if scale != 1.0:
+        img = cv2.resize(
+            image, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC,
+        )
+    else:
+        img = image.copy()
     h, w = img.shape[:2]
 
-    nose_root = fm.landmarks_px[LM.NOSE_ROOT]
-    nose_tip = fm.landmarks_px[LM.NOSE_TIP]
-    subnasal = fm.landmarks_px[LM.SUBNASAL]
-    wing_r = fm.landmarks_px[LM.NOSE_WING_R]
-    wing_l = fm.landmarks_px[LM.NOSE_WING_L]
-    eye_r = fm.landmarks_px[LM.EYE_INNER_R]
-    eye_l = fm.landmarks_px[LM.EYE_INNER_L]
-    upper_lip = fm.landmarks_px[LM.UPPER_LIP_TOP]
-    chin = fm.landmarks_px[LM.CHIN_BOTTOM]
+    def S(p):
+        return (float(p[0]) * scale, float(p[1]) * scale)
 
-    # 鼻の縦ライン
-    draw_line(img, nose_root, nose_tip, (0, 220, 255), 2)
-    # 小鼻幅
-    draw_line(img, wing_r, wing_l, (255, 200, 0), 2)
-    # 目間
-    draw_line(img, eye_r, eye_l, (255, 100, 100), 1)
-    # 鼻唇角ライン
-    draw_line(img, subnasal, nose_tip, (100, 255, 100), 1)
-    draw_line(img, subnasal, upper_lip, (100, 255, 100), 1)
-    # E ライン
-    draw_line(img, nose_tip, chin, (0, 255, 255), 1)
-    draw_point(img, upper_lip, (255, 100, 255), 4)
+    nose_root = S(fm.landmarks_px[LM.NOSE_ROOT])
+    nose_tip = S(fm.landmarks_px[LM.NOSE_TIP])
+    subnasal = S(fm.landmarks_px[LM.SUBNASAL])
+    wing_r = S(fm.landmarks_px[LM.NOSE_WING_R])
+    wing_l = S(fm.landmarks_px[LM.NOSE_WING_L])
+    eye_r = S(fm.landmarks_px[LM.EYE_INNER_R])
+    eye_l = S(fm.landmarks_px[LM.EYE_INNER_L])
+    upper_lip = S(fm.landmarks_px[LM.UPPER_LIP_TOP])
+    chin = S(fm.landmarks_px[LM.CHIN_BOTTOM])
 
-    for p in (nose_root, nose_tip, subnasal, wing_r, wing_l, eye_r, eye_l, upper_lip, chin):
-        draw_point(img, p, (255, 255, 255), 2)
+    lw = max(2, int(2 * scale))
+    pt_r = max(3, int(4 * scale))
 
-    # パネル
-    panel_w = int(w * 0.50)
-    panel_h = int(h * 0.42)
-    panel = np.zeros((panel_h, panel_w, 3), dtype=np.uint8)
-    panel[:] = (32, 32, 32)
-    put_label(panel, "2.2.5 NOSE", (10, 22), color=(0, 255, 255), scale=0.55, thickness=2)
+    draw_line_outlined(img, nose_root, nose_tip, C_VERT, thickness=lw)
+    draw_line_outlined(img, wing_r, wing_l, C_WING, thickness=lw)
+    draw_line_outlined(img, eye_r, eye_l, C_GAP, thickness=lw)
+    draw_line_outlined(img, subnasal, nose_tip, C_ANGLE, thickness=lw)
+    draw_line_outlined(img, subnasal, upper_lip, C_ANGLE, thickness=lw)
+    draw_line_outlined(img, nose_tip, chin, C_ELINE, thickness=lw)
 
-    lines = [
-        f"nose length : {r.nose_length_px:.1f}px",
-        f"wing width  : {r.nose_wing_width_px:.1f}px",
-        f"eye gap     : {r.eye_gap_px:.1f}px",
-        f"wing/gap    : {r.wing_to_gap_ratio:.3f}  (ideal 1.0)",
-        f"length/wing : {r.length_to_wing_ratio:.3f}  (ideal 1.5)",
-        f"nose-lip angle: {r.nose_lip_angle_deg:.1f} deg",
-        f"  -> {r.angle_status}",
-        f"E-line offset: {r.eline_offset_px:+.1f}px ({r.eline_norm*100:+.2f}%)",
-        f"  -> {r.eline_status}",
-        f"overall: {r.overall}",
+    for p, col in [
+        (nose_root, C_VERT), (nose_tip, C_VERT), (subnasal, C_ANGLE),
+        (wing_r, C_WING), (wing_l, C_WING),
+        (eye_r, C_GAP), (eye_l, C_GAP),
+        (upper_lip, C_ELINE), (chin, C_ELINE),
+    ]:
+        draw_point_outlined(img, p, col, r=pt_r)
+
+    label_bg = (20, 20, 25)
+    label_size = max(14, int(15 * scale))
+    draw_pil_text(
+        img, f"len {r.nose_length_px:.0f}",
+        (nose_tip[0] + 12, (nose_root[1] + nose_tip[1]) / 2),
+        color=C_VERT, size=label_size, bg=label_bg, bg_alpha=0.78, bg_pad=4,
+    )
+    draw_pil_text(
+        img, f"wing {r.nose_wing_width_px:.0f}",
+        (max(wing_r[0], wing_l[0]) + 10, (wing_r[1] + wing_l[1]) / 2 - 8),
+        color=C_WING, size=label_size, bg=label_bg, bg_alpha=0.78, bg_pad=4,
+    )
+    draw_pil_text(
+        img, f"angle {r.nose_lip_angle_deg:.0f}°",
+        (subnasal[0] + 12, subnasal[1] + 4),
+        color=C_ANGLE, size=label_size, bg=label_bg, bg_alpha=0.78, bg_pad=4,
+    )
+
+    # 左上ピル
+    pill_color = (
+        (140, 255, 160) if "4/4" in r.overall or "3/4" in r.overall
+        else (255, 200, 80)
+    )
+    pill_text = r.overall.upper()
+    pill_size = int(24 * max(1.0, scale * 0.9))
+    draw_pil_pill(
+        img, pill_text, (18, 18),
+        text_color=(20, 20, 30), pill_color=pill_color, size=pill_size,
+        pad_x=18, pad_y=10, radius=22,
+    )
+
+    # 右上凡例
+    legend_items = [
+        ("鼻縦", C_VERT),
+        ("小鼻", C_WING),
+        ("目間", C_GAP),
+        ("鼻唇角", C_ANGLE),
+        ("Eライン", C_ELINE),
     ]
-    for i, line in enumerate(lines):
-        put_label(panel, line, (10, 44 + i * 17), scale=0.4)
+    legend_font = max(14, int(15 * scale))
+    sw_w = int(18 * scale)
+    sw_h = int(14 * scale)
+    row_h = int(26 * scale)
+    lx = w - int(160 * scale)
+    ly = int(20 * scale)
+    cv2.rectangle(
+        img, (lx - 8, ly - 6),
+        (w - 14, ly + row_h * len(legend_items) + 4),
+        (0, 0, 0), -1,
+    )
+    for i, (name, col) in enumerate(legend_items):
+        y_item = ly + i * row_h
+        cv2.rectangle(
+            img, (lx, y_item + 4), (lx + sw_w, y_item + 4 + sw_h), col, -1,
+        )
+        draw_pil_text(
+            img, name, (lx + sw_w + 8, y_item),
+            color=(235, 235, 240), size=legend_font,
+        )
 
-    y0 = h - panel_h - 10
-    x0 = 10
-    if y0 >= 0 and x0 + panel_w <= w:
-        img[y0:y0 + panel_h, x0:x0 + panel_w] = panel
     return img
+
+
+def build_panel(r: NoseResult, width: int, height: int) -> np.ndarray:
+    pill_color = (
+        (140, 255, 160) if "4/4" in r.overall or "3/4" in r.overall
+        else (255, 200, 80)
+    )
+
+    def col_for(ok: bool):
+        return (140, 255, 160) if ok else (200, 200, 205)
+
+    ok_wing = r.wing_loss < 0.20
+    ok_length = r.length_loss < 0.20
+    ok_angle = "Ideal" in r.angle_status
+    ok_eline = "Ideal" in r.eline_status
+
+    spec = [
+        ("title", "2.2.5  鼻", (230, 230, 230)),
+        ("subtitle", "Nose Wings / Length / Angle / E-line"),
+        ("divider",),
+        ("spacer", 4),
+        ("section", "判定結果"),
+        ("big", r.overall.upper(), pill_color),
+        ("spacer", 6),
+        ("section", "比率"),
+        ("kv", "wing / gap (理想 1.0)",
+            f"{r.wing_to_gap_ratio:.3f}", col_for(ok_wing)),
+        ("kv", "length / wing (理想 1.5)",
+            f"{r.length_to_wing_ratio:.3f}", col_for(ok_length)),
+        ("spacer", 6),
+        ("section", "鼻唇角 (理想 90-100°)"),
+        ("kv", "angle", f"{r.nose_lip_angle_deg:.1f} °", col_for(ok_angle)),
+        ("text", r.angle_status, (200, 200, 205)),
+        ("spacer", 6),
+        ("section", "E ライン"),
+        ("kv", "offset", f"{r.eline_offset_px:+.1f} px", col_for(ok_eline)),
+        ("kv", "norm", f"{r.eline_norm*100:+.2f} %"),
+        ("text", r.eline_status, (200, 200, 205)),
+        ("spacer", 6),
+        ("section", "ピクセル長"),
+        ("kv", "鼻縦", f"{r.nose_length_px:.1f} px"),
+        ("kv", "小鼻幅", f"{r.nose_wing_width_px:.1f} px"),
+        ("kv", "目間", f"{r.eye_gap_px:.1f} px"),
+    ]
+
+    return render_report_panel(spec, width, height)
+
+
+def build_report(image: np.ndarray, fm: FaceMesh,
+                 r: NoseResult) -> np.ndarray:
+    scale = 1.5
+    src_big = cv2.resize(
+        image, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC,
+    )
+    ann_big = annotate_face(image, fm, r, scale=scale)
+    panel = build_panel(r, 620, src_big.shape[0])
+    return compose_report(src_big, ann_big, panel)
+
+
+# 後方互換
+def visualize(image: np.ndarray, fm: FaceMesh, r: NoseResult) -> np.ndarray:
+    return annotate_face(image, fm, r, scale=1.0)
 
 
 def run_one(image_path: Path, output_path=None, imgonly=False, as_json=False):
@@ -221,9 +338,11 @@ def run_one(image_path: Path, output_path=None, imgonly=False, as_json=False):
     print(f"overall: {r.overall}")
     if as_json:
         print(json.dumps(r.to_dict(), indent=2, ensure_ascii=False))
-    vis = visualize(image, fm, r)
     out = output_path or image_path.parent / f"nose_{image_path.stem}.png"
-    cv2.imwrite(str(out), vis if imgonly else make_side_by_side(image, vis))
+    if imgonly:
+        cv2.imwrite(str(out), annotate_face(image, fm, r))
+    else:
+        cv2.imwrite(str(out), build_report(image, fm, r))
     print(f"出力: {out}")
     return r
 

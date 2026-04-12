@@ -37,10 +37,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 from shared.facemesh import FaceMesh
 from shared.face_metrics import (
     LM,
-    draw_line,
-    draw_point,
+    compose_report,
+    draw_line_outlined,
+    draw_pil_pill,
+    draw_pil_text,
+    draw_point_outlined,
     make_side_by_side,
-    put_label,
+    render_report_panel,
 )
 
 
@@ -175,76 +178,201 @@ def analyze(fm: FaceMesh) -> EyebrowResult:
 
 
 # ==============================================================
-# 可視化
+# 可視化 (UI/UX 改善版: レポートパネル + annotate 分離)
 # ==============================================================
-def visualize(image: np.ndarray, fm: FaceMesh, r: EyebrowResult) -> np.ndarray:
-    img = image.copy()
+C_BROW = (80, 220, 255)         # 眉本体 アンバー
+C_REF_HEAD = (200, 140, 255)    # 眉頭垂直 マゼンタ
+C_REF_TAIL = (140, 255, 160)    # 小鼻→目尻 緑
+C_REF_PEAK = (255, 200, 80)     # 小鼻→虹彩外 シアン
+C_HEAD_PT = (255, 220, 80)
+C_PEAK_PT = (140, 255, 160)
+C_TAIL_PT = (200, 140, 255)
+
+CATEGORY_COLOR = {
+    "Masculine Rising (>=8 deg)": (200, 140, 255),
+    "Natural": (140, 255, 160),
+    "Flat / Parallel": (80, 180, 255),
+}
+
+
+def annotate_face(image: np.ndarray, fm: FaceMesh, r: EyebrowResult,
+                  scale: float = 1.0) -> np.ndarray:
+    if scale != 1.0:
+        img = cv2.resize(
+            image, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC,
+        )
+    else:
+        img = image.copy()
     h, w = img.shape[:2]
 
-    # 右眉の基準線を描画
-    for side, head_id, peak_id, tail_id, eye_in_id, eye_out_id, iris_out_id, nose_id in [
-        (r.right, LM.BROW_HEAD_R, LM.BROW_PEAK_R, LM.BROW_TAIL_R,
+    def S(p):
+        return (float(p[0]) * scale, float(p[1]) * scale)
+
+    lw = max(2, int(2 * scale))
+    lw_thin = max(1, int(1 * scale))
+    pt_r = max(3, int(4 * scale))
+
+    for head_id, peak_id, tail_id, eye_in_id, eye_out_id, iris_out_id, nose_id in [
+        (LM.BROW_HEAD_R, LM.BROW_PEAK_R, LM.BROW_TAIL_R,
          LM.EYE_INNER_R, LM.EYE_OUTER_R, LM.IRIS_R[3], LM.NOSE_WING_R),
-        (r.left, LM.BROW_HEAD_L, LM.BROW_PEAK_L, LM.BROW_TAIL_L,
+        (LM.BROW_HEAD_L, LM.BROW_PEAK_L, LM.BROW_TAIL_L,
          LM.EYE_INNER_L, LM.EYE_OUTER_L, LM.IRIS_L[3], LM.NOSE_WING_L),
     ]:
-        head = fm.landmarks_px[head_id]
-        peak = fm.landmarks_px[peak_id]
-        tail = fm.landmarks_px[tail_id]
-        eye_in = fm.landmarks_px[eye_in_id]
-        eye_out = fm.landmarks_px[eye_out_id]
-        iris_out = fm.landmarks_px[iris_out_id]
-        nose = fm.landmarks_px[nose_id]
+        head_raw = fm.landmarks_px[head_id]
+        peak_raw = fm.landmarks_px[peak_id]
+        tail_raw = fm.landmarks_px[tail_id]
+        eye_in_raw = fm.landmarks_px[eye_in_id]
+        eye_out_raw = fm.landmarks_px[eye_out_id]
+        iris_out_raw = fm.landmarks_px[iris_out_id]
+        nose_raw = fm.landmarks_px[nose_id]
 
-        # 眉の3点を結ぶ
-        draw_line(img, head, peak, (0, 255, 255), 2)
-        draw_line(img, peak, tail, (0, 255, 255), 2)
+        head = S(head_raw)
+        peak = S(peak_raw)
+        tail = S(tail_raw)
+        eye_in = S(eye_in_raw)
+        nose = S(nose_raw)
 
-        # 基準線（薄め）
-        # 眉頭垂直: eye_in の x で上下
-        draw_line(img, (int(eye_in[0]), int(head[1]) - 30), (int(eye_in[0]), int(head[1]) + 10),
-                  (255, 100, 100), 1)
-        # 小鼻 → 目尻 の延長 (眉尻基準)
-        vec = tail - nose
-        ext = nose + vec * 1.3
-        draw_line(img, nose, ext, (100, 255, 100), 1)
-        # 小鼻 → 虹彩外 の延長 (眉山基準)
-        vec2 = peak - nose
-        ext2 = nose + vec2 * 1.1
-        draw_line(img, nose, ext2, (255, 200, 100), 1)
+        # 眉本体
+        draw_line_outlined(img, head, peak, C_BROW, thickness=lw)
+        draw_line_outlined(img, peak, tail, C_BROW, thickness=lw)
 
-        draw_point(img, head, (255, 255, 0), 4)
-        draw_point(img, peak, (0, 255, 0), 4)
-        draw_point(img, tail, (255, 100, 100), 4)
+        # 眉頭垂直線
+        draw_line_outlined(
+            img, (eye_in[0], head[1] - 30 * scale),
+            (eye_in[0], head[1] + 10 * scale),
+            C_REF_HEAD, thickness=lw_thin,
+        )
+        # 小鼻 → 目尻 延長 (眉尻基準)
+        vec = tail_raw - nose_raw
+        ext = nose_raw + vec * 1.3
+        draw_line_outlined(
+            img, nose, S(ext), C_REF_TAIL, thickness=lw_thin,
+        )
+        # 小鼻 → 虹彩外 延長 (眉山基準)
+        vec2 = iris_out_raw.astype(np.float64) - nose_raw.astype(np.float64)
+        ext2 = nose_raw + vec2 * 1.6
+        draw_line_outlined(
+            img, nose, S(ext2), C_REF_PEAK, thickness=lw_thin,
+        )
 
-    # パネル
-    panel_w = int(w * 0.52)
-    panel_h = int(h * 0.40)
-    panel = np.zeros((panel_h, panel_w, 3), dtype=np.uint8)
-    panel[:] = (32, 32, 32)
-    put_label(panel, "2.2.7 EYEBROW GEOMETRY", (10, 22), color=(0, 255, 255), scale=0.55, thickness=2)
+        draw_point_outlined(img, head, C_HEAD_PT, r=pt_r)
+        draw_point_outlined(img, peak, C_PEAK_PT, r=pt_r)
+        draw_point_outlined(img, tail, C_TAIL_PT, r=pt_r)
 
-    def _fmt(side: BrowSide, label: str) -> list[str]:
-        return [
-            f"{label} head dev   : {side.head_deviation_px:4.1f}px",
-            f"{label} peak dev   : {side.peak_deviation_px:4.1f}px",
-            f"{label} tail dev   : {side.tail_deviation_px:4.1f}px",
-            f"{label} h2p/p2t    : {side.peak_ratio:.2f} (ideal 2.0)",
-            f"{label} peak angle : {side.angle_head_to_peak_deg:+.1f} deg",
-        ]
+    # 左上ピル
+    pill_color = CATEGORY_COLOR.get(r.category, (255, 255, 255))
+    pill_text = r.category.split(" ")[0].upper()
+    pill_size = int(24 * max(1.0, scale * 0.9))
+    draw_pil_pill(
+        img, pill_text, (18, 18),
+        text_color=(20, 20, 30), pill_color=pill_color, size=pill_size,
+        pad_x=18, pad_y=10, radius=22,
+    )
 
-    lines = _fmt(r.right, "R") + _fmt(r.left, "L") + [
-        f"symmetry : {r.symmetry_score*100:.1f}%",
-        f"category : {r.category}",
+    # 右上凡例
+    legend_items = [
+        ("眉本体", C_BROW),
+        ("眉頭垂直", C_REF_HEAD),
+        ("眉尻基準", C_REF_TAIL),
+        ("眉山基準", C_REF_PEAK),
     ]
-    for i, line in enumerate(lines):
-        put_label(panel, line, (10, 42 + i * 16), scale=0.38)
+    legend_font = max(14, int(15 * scale))
+    sw_w = int(18 * scale)
+    sw_h = int(14 * scale)
+    row_h = int(26 * scale)
+    lx = w - int(160 * scale)
+    ly = int(20 * scale)
+    cv2.rectangle(
+        img, (lx - 8, ly - 6),
+        (w - 14, ly + row_h * len(legend_items) + 4),
+        (0, 0, 0), -1,
+    )
+    for i, (name, col) in enumerate(legend_items):
+        y_item = ly + i * row_h
+        cv2.rectangle(
+            img, (lx, y_item + 4), (lx + sw_w, y_item + 4 + sw_h), col, -1,
+        )
+        draw_pil_text(
+            img, name, (lx + sw_w + 8, y_item),
+            color=(235, 235, 240), size=legend_font,
+        )
 
-    y0 = h - panel_h - 10
-    x0 = 10
-    if y0 >= 0 and x0 + panel_w <= w:
-        img[y0:y0 + panel_h, x0:x0 + panel_w] = panel
     return img
+
+
+def build_panel(r: EyebrowResult, width: int, height: int) -> np.ndarray:
+    pill_color = CATEGORY_COLOR.get(r.category, (255, 255, 255))
+    sym_color = (140, 255, 160) if r.symmetry_score >= 0.9 else (230, 230, 235)
+
+    spec = [
+        ("title", "2.2.7  眉", (230, 230, 230)),
+        ("subtitle", "Eyebrow Geometry"),
+        ("divider",),
+        ("spacer", 4),
+        ("section", "判定結果"),
+        ("big", r.category.split(" ")[0].upper(), pill_color),
+        ("text", r.category, (210, 210, 215)),
+        ("spacer", 6),
+        ("section", "右眉 R"),
+        ("kv", "peak ratio (理想 2.0)", f"{r.right.peak_ratio:.2f}"),
+        ("kv", "peak angle", f"{r.right.angle_head_to_peak_deg:+.1f} °"),
+        ("kv", "head dev", f"{r.right.head_deviation_px:.1f} px"),
+        ("kv", "peak dev", f"{r.right.peak_deviation_px:.1f} px"),
+        ("kv", "tail dev", f"{r.right.tail_deviation_px:.1f} px"),
+        ("spacer", 4),
+        ("section", "左眉 L"),
+        ("kv", "peak ratio (理想 2.0)", f"{r.left.peak_ratio:.2f}"),
+        ("kv", "peak angle", f"{r.left.angle_head_to_peak_deg:+.1f} °"),
+        ("kv", "head dev", f"{r.left.head_deviation_px:.1f} px"),
+        ("kv", "peak dev", f"{r.left.peak_deviation_px:.1f} px"),
+        ("kv", "tail dev", f"{r.left.tail_deviation_px:.1f} px"),
+        ("spacer", 6),
+        ("section", "対称性"),
+        ("kv", "symmetry", f"{r.symmetry_score*100:.1f} %", sym_color),
+        ("spacer", 6),
+        ("section", "誤差レーダー"),
+    ]
+
+    # レーダー: 5 軸 (head_dev, peak_dev, tail_dev, peak_ratio_err, symmetry)
+    head_dev = (r.right.head_deviation_px + r.left.head_deviation_px) / 2
+    peak_dev = (r.right.peak_deviation_px + r.left.peak_deviation_px) / 2
+    tail_dev = (r.right.tail_deviation_px + r.left.tail_deviation_px) / 2
+    peak_ratio_err = (
+        abs(r.right.peak_ratio - 2.0) + abs(r.left.peak_ratio - 2.0)
+    ) / 2
+
+    # 0-1 に正規化（小さいほど良い → 反転して値を取る）
+    def _norm_dev(v: float, scale: float) -> float:
+        # v=0 → 1.0、v>=scale → 0.0
+        return max(0.0, min(1.0, 1.0 - v / max(scale, 1e-3)))
+
+    radar_labels = ["head", "peak", "tail", "ratio", "sym"]
+    radar_vals = [
+        _norm_dev(head_dev, 30),
+        _norm_dev(peak_dev, 30),
+        _norm_dev(tail_dev, 30),
+        _norm_dev(peak_ratio_err, 2.0),
+        max(0.0, min(1.0, r.symmetry_score)),
+    ]
+    spec.append(("radar", radar_labels, radar_vals, None, pill_color))
+
+    return render_report_panel(spec, width, height)
+
+
+def build_report(image: np.ndarray, fm: FaceMesh,
+                 r: EyebrowResult) -> np.ndarray:
+    scale = 1.5
+    src_big = cv2.resize(
+        image, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC,
+    )
+    ann_big = annotate_face(image, fm, r, scale=scale)
+    panel = build_panel(r, 620, src_big.shape[0])
+    return compose_report(src_big, ann_big, panel)
+
+
+# 後方互換
+def visualize(image: np.ndarray, fm: FaceMesh, r: EyebrowResult) -> np.ndarray:
+    return annotate_face(image, fm, r, scale=1.0)
 
 
 def run_one(image_path: Path, output_path=None, imgonly=False, as_json=False):
@@ -260,9 +388,11 @@ def run_one(image_path: Path, output_path=None, imgonly=False, as_json=False):
     print(f"sym={r.symmetry_score*100:.1f}%  category={r.category}")
     if as_json:
         print(json.dumps(r.to_dict(), indent=2, ensure_ascii=False))
-    vis = visualize(image, fm, r)
     out = output_path or image_path.parent / f"brow_{image_path.stem}.png"
-    cv2.imwrite(str(out), vis if imgonly else make_side_by_side(image, vis))
+    if imgonly:
+        cv2.imwrite(str(out), annotate_face(image, fm, r))
+    else:
+        cv2.imwrite(str(out), build_report(image, fm, r))
     print(f"出力: {out}")
     return r
 

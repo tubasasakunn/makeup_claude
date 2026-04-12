@@ -8,8 +8,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 from shared.facemesh import FaceMesh
-from shared.face_metrics import make_side_by_side
-from main import analyze, visualize
+from main import analyze, build_report
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 IMGS_DIR = PROJECT_ROOT / "imgs"
@@ -31,9 +30,8 @@ def main():
         r = analyze(fm)
         print(f"  lip={r.lip_ratio:.2f}  phil={r.philtrum_ratio:.2f}  "
               f"mouth/face={r.mouth_to_face_ratio*100:.1f}%  [{r.overall}]")
-        vis = visualize(image, fm, r)
         cv2.imwrite(str(OUTPUT_DIR / f"result_{img_path.stem}.png"),
-                    make_side_by_side(image, vis))
+                    build_report(image, fm, r))
         results.append((img_path.stem, r))
 
     if results:

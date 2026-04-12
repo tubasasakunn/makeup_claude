@@ -42,10 +42,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 from shared.facemesh import FaceMesh
 from shared.face_metrics import (
     LM,
-    draw_line,
-    draw_point,
+    compose_report,
+    draw_line_outlined,
+    draw_pil_pill,
+    draw_pil_text,
+    draw_point_outlined,
     make_side_by_side,
-    put_label,
+    render_report_panel,
 )
 
 
@@ -138,73 +141,163 @@ def analyze(fm: FaceMesh) -> VerticalResult:
 
 
 # ==============================================================
-# 可視化
+# 可視化 (UI/UX 改善版: レポートパネル + annotate 分離)
 # ==============================================================
-def visualize(image: np.ndarray, fm: FaceMesh, r: VerticalResult) -> np.ndarray:
-    img = image.copy()
+C_UPPER = (80, 220, 255)    # アンバー
+C_MID = (140, 255, 160)     # 緑
+C_LOWER = (200, 140, 255)   # マゼンタ
+C_LINE = (255, 255, 255)
+
+CLOSEST_COLOR = {
+    "traditional": (80, 220, 255),
+    "reiwa": (140, 255, 160),
+}
+CLOSEST_JP = {
+    "traditional": "伝統 1:1:1",
+    "reiwa": "令和 1:1:0.8",
+}
+
+
+def annotate_face(image: np.ndarray, fm: FaceMesh, r: VerticalResult,
+                  scale: float = 1.0) -> np.ndarray:
+    if scale != 1.0:
+        img = cv2.resize(
+            image, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC,
+        )
+    else:
+        img = image.copy()
     h, w = img.shape[:2]
 
-    # 顔の左右端 x
-    x_l = int(fm.landmarks_px[LM.TEMPLE_R][0])
-    x_r = int(fm.landmarks_px[LM.TEMPLE_L][0])
+    x_l = int(fm.landmarks_px[LM.TEMPLE_R][0] * scale)
+    x_r = int(fm.landmarks_px[LM.TEMPLE_L][0] * scale)
+    if x_l > x_r:
+        x_l, x_r = x_r, x_l
 
-    # 3区間を色で塗る
-    overlay = img.copy()
+    hairline = r.hairline_y * scale
+    brow = r.brow_y * scale
+    subn = r.subnasal_y * scale
+    chin = r.chin_y * scale
+
     regions = [
-        (r.hairline_y, r.brow_y, (0, 220, 255), "Upper"),
-        (r.brow_y, r.subnasal_y, (0, 180, 100), "Middle"),
-        (r.subnasal_y, r.chin_y, (255, 140, 0), "Lower"),
+        (hairline, brow, C_UPPER, "上顔面", r.upper_norm),
+        (brow, subn, C_MID, "中顔面", r.middle_norm),
+        (subn, chin, C_LOWER, "下顔面", r.lower_norm),
     ]
-    for y0, y1, col, name in regions:
+
+    overlay = img.copy()
+    for y0, y1, col, *_ in regions:
         cv2.rectangle(
             overlay, (x_l, int(y0)), (x_r, int(y1)),
-            col, -1
+            col, -1,
         )
     cv2.addWeighted(overlay, 0.22, img, 0.78, 0, img)
 
-    # 境界線を引く
-    for y in [r.hairline_y, r.brow_y, r.subnasal_y, r.chin_y]:
-        draw_line(img, (x_l - 5, y), (x_r + 5, y), (255, 255, 255), 1)
-
-    # 各区間のラベル
-    center_x = (x_l + x_r) // 2
-    for (y0, y1, col, name), norm in zip(
-        regions, [r.upper_norm, r.middle_norm, r.lower_norm]
-    ):
-        cy = int((y0 + y1) / 2)
-        put_label(
-            img, f"{name} {norm:.2f}",
-            (center_x - 30, cy + 4),
-            color=col, scale=0.5, thickness=1,
+    lw = max(2, int(2 * scale))
+    pad = int(8 * scale)
+    for y in [hairline, brow, subn, chin]:
+        draw_line_outlined(
+            img, (x_l - pad, y), (x_r + pad, y), C_LINE, thickness=lw,
         )
 
-    # --- テキストパネル ---
-    panel_w = int(w * 0.50)
-    panel_h = int(h * 0.36)
-    panel = np.zeros((panel_h, panel_w, 3), dtype=np.uint8)
-    panel[:] = (32, 32, 32)
+    label_bg = (20, 20, 25)
+    label_size = max(16, int(18 * scale))
+    center_x = (x_l + x_r) // 2
 
-    put_label(panel, "2.2.2 VERTICAL THIRDS", (10, 22),
-              color=(0, 255, 255), scale=0.55, thickness=2)
+    for (y0, y1, col, name, norm) in regions:
+        cy = int((y0 + y1) / 2)
+        draw_pil_text(
+            img, f"{name} {norm:.2f}",
+            (center_x - int(50 * scale), cy - int(10 * scale)),
+            color=col, size=label_size,
+            bg=label_bg, bg_alpha=0.78, bg_pad=5,
+        )
 
-    lines = [
-        f"upper  : {r.upper_px:6.1f}px  ({r.upper_norm:.3f})",
-        f"middle : {r.middle_px:6.1f}px  ({r.middle_norm:.3f})",
-        f"lower  : {r.lower_px:6.1f}px  ({r.lower_norm:.3f})",
-        f"traditional(1:1:1)  loss={r.traditional_loss:.3f}",
-        f"reiwa      (1:1:0.8) loss={r.reiwa_loss:.3f}",
-        f"closest    : {r.closest}",
-        f"category   : {r.category}",
+    # 左上ピル
+    pill_color = CLOSEST_COLOR.get(r.closest, (255, 255, 255))
+    pill_text = CLOSEST_JP.get(r.closest, r.closest).upper()
+    pill_size = int(24 * max(1.0, scale * 0.9))
+    draw_pil_pill(
+        img, pill_text, (18, 18),
+        text_color=(20, 20, 30), pill_color=pill_color, size=pill_size,
+        pad_x=18, pad_y=10, radius=22,
+    )
+
+    # 右上凡例
+    legend_items = [
+        ("上顔面", C_UPPER),
+        ("中顔面", C_MID),
+        ("下顔面", C_LOWER),
     ]
-    for i, line in enumerate(lines):
-        put_label(panel, line, (10, 44 + i * 18), scale=0.42)
-
-    y0 = h - panel_h - 10
-    x0 = 10
-    if y0 >= 0 and x0 + panel_w <= w:
-        img[y0:y0 + panel_h, x0:x0 + panel_w] = panel
+    legend_font = max(14, int(15 * scale))
+    sw_w = int(18 * scale)
+    sw_h = int(14 * scale)
+    row_h = int(26 * scale)
+    lx = w - int(150 * scale)
+    ly = int(20 * scale)
+    cv2.rectangle(
+        img, (lx - 8, ly - 6),
+        (w - 14, ly + row_h * len(legend_items) + 4),
+        (0, 0, 0), -1,
+    )
+    for i, (name, col) in enumerate(legend_items):
+        y_item = ly + i * row_h
+        cv2.rectangle(
+            img, (lx, y_item + 4), (lx + sw_w, y_item + 4 + sw_h), col, -1,
+        )
+        draw_pil_text(
+            img, name, (lx + sw_w + 8, y_item),
+            color=(235, 235, 240), size=legend_font,
+        )
 
     return img
+
+
+def build_panel(r: VerticalResult, width: int, height: int) -> np.ndarray:
+    pill_color = CLOSEST_COLOR.get(r.closest, (255, 255, 255))
+    trad_color = (140, 255, 160) if r.closest == "traditional" else (180, 180, 185)
+    reiwa_color = (140, 255, 160) if r.closest == "reiwa" else (180, 180, 185)
+
+    spec = [
+        ("title", "2.2.2  垂直三分割", (230, 230, 230)),
+        ("subtitle", "Vertical Thirds (Traditional vs Reiwa)"),
+        ("divider",),
+        ("spacer", 4),
+        ("section", "判定結果"),
+        ("big", CLOSEST_JP.get(r.closest, r.closest).upper(), pill_color),
+        ("text", r.category, (210, 210, 215)),
+        ("spacer", 6),
+        ("section", "正規化比率 (中顔面=1)"),
+        ("kv", "上顔面 upper", f"{r.upper_norm:.3f}", C_UPPER),
+        ("kv", "中顔面 middle", f"{r.middle_norm:.3f}", C_MID),
+        ("kv", "下顔面 lower", f"{r.lower_norm:.3f}", C_LOWER),
+        ("spacer", 6),
+        ("section", "乖離度 (低いほど近い)"),
+        ("kv", "伝統 1:1:1", f"{r.traditional_loss:.3f}", trad_color),
+        ("kv", "令和 1:1:0.8", f"{r.reiwa_loss:.3f}", reiwa_color),
+        ("spacer", 6),
+        ("section", "ピクセル長"),
+        ("kv", "upper", f"{r.upper_px:.0f} px"),
+        ("kv", "middle", f"{r.middle_px:.0f} px"),
+        ("kv", "lower", f"{r.lower_px:.0f} px"),
+    ]
+
+    return render_report_panel(spec, width, height)
+
+
+def build_report(image: np.ndarray, fm: FaceMesh,
+                 r: VerticalResult) -> np.ndarray:
+    scale = 1.5
+    src_big = cv2.resize(
+        image, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC,
+    )
+    ann_big = annotate_face(image, fm, r, scale=scale)
+    panel = build_panel(r, 620, src_big.shape[0])
+    return compose_report(src_big, ann_big, panel)
+
+
+# 後方互換
+def visualize(image: np.ndarray, fm: FaceMesh, r: VerticalResult) -> np.ndarray:
+    return annotate_face(image, fm, r, scale=1.0)
 
 
 # ==============================================================
@@ -230,12 +323,11 @@ def run_one(image_path: Path, output_path: Path | None = None,
     if as_json:
         print(json.dumps(r.to_dict(), indent=2, ensure_ascii=False))
 
-    vis = visualize(image, fm, r)
     out_path = output_path or image_path.parent / f"vertical_{image_path.stem}.png"
     if imgonly:
-        cv2.imwrite(str(out_path), vis)
+        cv2.imwrite(str(out_path), annotate_face(image, fm, r))
     else:
-        cv2.imwrite(str(out_path), make_side_by_side(image, vis))
+        cv2.imwrite(str(out_path), build_report(image, fm, r))
     print(f"出力: {out_path}")
     return r
 
