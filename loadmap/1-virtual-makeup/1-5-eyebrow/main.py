@@ -133,67 +133,51 @@ def erase_eyebrows(
 # EYEBROW_TYPES.md を参照
 EYEBROW_TYPES = {
     "straight": {
-        "peak_position": 0.5,
-        "peak_height_ratio": 0.04,
-        "tail_height_ratio": 0.0,
-        "thickness_ratio": 1.05,
-        "length_ratio": 0.95,
-        "desc": "ストレート眉（若々しい・韓流）",
-    },
-    "parallel_thick": {
         "peak_position": 0.55,
-        "peak_height_ratio": 0.07,
-        "tail_height_ratio": 0.0,
-        "thickness_ratio": 1.2,
-        "length_ratio": 1.0,
-        "desc": "並行太眉（ナチュラル・男らしい）",
-    },
-    "natural_arch": {
-        "peak_position": 0.62,
-        "peak_height_ratio": 0.13,
+        "peak_height_ratio": 0.08,
         "tail_height_ratio": 0.0,
         "thickness_ratio": 0.95,
         "length_ratio": 1.0,
-        "desc": "ナチュラルアーチ（知的・バランス）",
+        "desc": "ストレート眉（直線的・卵型向け）",
     },
     "arch": {
-        "peak_position": 0.65,
-        "peak_height_ratio": 0.18,
-        "tail_height_ratio": 0.02,
-        "thickness_ratio": 0.95,
-        "length_ratio": 1.0,
-        "desc": "アーチ眉（上品・標準）",
-    },
-    "angular": {
-        "peak_position": 0.65,
-        "peak_height_ratio": 0.25,
+        "peak_position": 0.62,
+        "peak_height_ratio": 0.28,
         "tail_height_ratio": 0.05,
+        "thickness_ratio": 0.88,
+        "length_ratio": 1.0,
+        "desc": "アーチ眉（緩やかカーブ・丸顔向け）",
+    },
+    "parallel": {
+        "peak_position": 0.5,
+        "peak_height_ratio": 0.03,
+        "tail_height_ratio": 0.0,
+        "thickness_ratio": 1.15,
+        "length_ratio": 1.05,
+        "desc": "平行眉（水平・太め・面長向け）",
+    },
+    "corner": {
+        "peak_position": 0.6,
+        "peak_height_ratio": 0.4,
+        "tail_height_ratio": 0.12,
+        "thickness_ratio": 0.88,
+        "length_ratio": 0.95,
+        "desc": "コーナー眉（上がり眉・ベース型向け）",
+    },
+    "natural": {
+        "peak_position": 0.55,
+        "peak_height_ratio": 0.12,
+        "tail_height_ratio": 0.08,
         "thickness_ratio": 0.95,
         "length_ratio": 1.0,
-        "desc": "角度眉（シャープ・クール）",
-    },
-    "short_thick": {
-        "peak_position": 0.5,
-        "peak_height_ratio": 0.06,
-        "tail_height_ratio": 0.0,
-        "thickness_ratio": 1.25,
-        "length_ratio": 0.85,
-        "desc": "短め太眉（ワイルド・強い）",
-    },
-    "long_arch": {
-        "peak_position": 0.68,
-        "peak_height_ratio": 0.15,
-        "tail_height_ratio": 0.03,
-        "thickness_ratio": 0.88,
-        "length_ratio": 1.05,
-        "desc": "長めアーチ（大人・クール）",
+        "desc": "ナチュラル眉（自然な下がり・逆三角向け）",
     },
 }
 
-# デフォルト設定（プロのガイドライン準拠: 男性眉は目の縦幅の50-66%の太さが理想）
-DEFAULT_EYEBROW_TYPE = "natural_arch"
-DEFAULT_EYEBROW_COLOR_RGB = (110, 85, 65)  # ナチュラルブラウン（明るめ）
-DEFAULT_EYEBROW_INTENSITY = 0.55           # 適度な濃さ
+# デフォルト設定
+DEFAULT_EYEBROW_TYPE = "straight"
+DEFAULT_EYEBROW_COLOR_RGB = (110, 85, 65)  # ナチュラルブラウン
+DEFAULT_EYEBROW_INTENSITY = 0.55
 
 
 def compute_brow_anchors(fm: FaceMesh, side: str = "right") -> dict:
@@ -315,7 +299,7 @@ def _solve_bezier_control(p0: np.ndarray, pm: np.ndarray, p2: np.ndarray,
 
 
 # タイプごとに先端の尖り度を制御
-SHARP_BROW_TYPES = {"angular", "arch", "long_arch", "natural_arch"}
+SHARP_BROW_TYPES = {"corner", "arch", "straight"}
 
 
 def _catmull_rom_centerline(head: np.ndarray, peak: np.ndarray, tail: np.ndarray,
