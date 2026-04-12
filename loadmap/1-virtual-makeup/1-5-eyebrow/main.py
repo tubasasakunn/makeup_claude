@@ -34,6 +34,7 @@ Examples:
 """
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
@@ -486,6 +487,114 @@ def _gentle_peak(t: float, peak_t: float, peak_height: float,
     return peak_height * math.exp(-x * x)
 
 
+# =========================================================
+# トレース形状ファイル読み込み
+# =========================================================
+SHAPES_FILE = Path(__file__).parent / "eyebrow_shapes.json"
+
+_shapes_cache = None
+
+
+def _load_shapes() -> dict:
+    """eyebrow_shapes.json があれば読み込む（キャッシュ付き）"""
+    global _shapes_cache
+    if _shapes_cache is not None:
+        return _shapes_cache
+    if SHAPES_FILE.exists():
+        with open(SHAPES_FILE) as f:
+            _shapes_cache = json.load(f)
+    else:
+        _shapes_cache = {}
+    return _shapes_cache
+
+
+def _interpolate_contour(pts_norm: list, n: int = 120) -> np.ndarray:
+    """正規化された輪郭点を n 点にスムーズ補間
+
+    pts_norm: [[t, offset], ...] のリスト
+    返り値: (n, 2) 配列 (t, offset)
+    """
+    pts = np.array(pts_norm)
+    ts = pts[:, 0]
+    offsets = pts[:, 1]
+
+    # t が単調増加するようにソート
+    order = np.argsort(ts)
+    ts = ts[order]
+    offsets = offsets[order]
+
+    ts_new = np.linspace(ts[0], ts[-1], n)
+
+    # scipy が使えればスプライン補間、なければ線形補間
+    try:
+        from scipy.interpolate import CubicSpline
+        cs = CubicSpline(ts, offsets, bc_type='natural')
+        offsets_new = cs(ts_new)
+    except ImportError:
+        offsets_new = np.interp(ts_new, ts, offsets)
+
+    return np.column_stack([ts_new, offsets_new])
+
+
+def _make_upward_normal(axis_unit: np.ndarray) -> np.ndarray:
+    """常に上向き（画像座標で負のy方向）を指す法線を返す"""
+    normal = np.array([axis_unit[1], -axis_unit[0]])
+    if normal[1] > 0:
+        normal = -normal
+    return normal
+
+
+def generate_brow_polygon_from_shape(anchors: dict, shape_data: dict,
+                                     n: int = 120,
+                                     thickness_scale: float = 1.0) -> np.ndarray:
+    """トレースした形状データからポリゴンを生成
+
+    shape_data: {"upper": [[t, offset], ...], "lower": [[t, offset], ...]}
+    thickness_scale: 厚み倍率。上辺と下辺の中心線を保ちつつ厚みだけ拡大。
+    座標系:
+      t: HEAD→TAIL 軸上の位置 (0=HEAD, 1=TAIL)
+      offset: 軸に垂直な距離 / 眉長さ (正=上方向)
+    """
+    head = anchors["head"].copy()
+    tail = anchors["tail"].copy()
+
+    axis = tail - head
+    axis_len = np.linalg.norm(axis)
+    if axis_len < 1e-3:
+        return np.array([[0, 0]], dtype=np.int32)
+
+    axis_unit = axis / axis_len
+    normal = _make_upward_normal(axis_unit)
+
+    upper = _interpolate_contour(shape_data["upper"], n)
+    lower = _interpolate_contour(shape_data["lower"], n)
+
+    # thickness_scale: 中心線を基準に上下に拡大
+    if thickness_scale != 1.0:
+        # t を揃えてから中心と半厚みを計算
+        ts = upper[:, 0]
+        # lower を upper と同じ t でリサンプル
+        lower_offsets_resampled = np.interp(ts, lower[:, 0], lower[:, 1])
+        center = (upper[:, 1] + lower_offsets_resampled) / 2
+        half_thick = (upper[:, 1] - lower_offsets_resampled) / 2
+        upper[:, 1] = center + half_thick * thickness_scale
+        lower_scaled = np.column_stack([ts, center - half_thick * thickness_scale])
+        lower = lower_scaled
+
+    def to_world(pts_norm):
+        result = []
+        for t, offset in pts_norm:
+            pos = head + t * axis + offset * axis_len * normal
+            result.append(pos)
+        return np.array(result)
+
+    upper_pts = to_world(upper)
+    lower_pts = to_world(lower)
+
+    polygon = np.vstack([upper_pts, lower_pts[::-1]])
+    return polygon.astype(np.int32)
+
+
 def generate_brow_polygon(anchors: dict, brow_type: str) -> np.ndarray:
     """眉タイプに応じた上下ラインを生成してポリゴン頂点列を返す
 
@@ -554,18 +663,32 @@ def generate_brow_polygon(anchors: dict, brow_type: str) -> np.ndarray:
 
 
 def build_brow_mask(fm: FaceMesh, w: int, h: int, brow_type: str,
-                    supersample: int = 2) -> np.ndarray:
+                    supersample: int = 2,
+                    thickness_scale: float = 1.0) -> np.ndarray:
     """両眉のマスクを生成（float32, 0-1）
 
+    eyebrow_shapes.json にトレース済み形状があればそちらを優先。
+    なければパラメータベースのフォールバック。
+
     supersample: 指定倍率で描画してから縮小（アンチエイリアス用）
+    thickness_scale: トレース形状の厚み倍率
     """
+    # トレース形状があるか確認
+    shapes = _load_shapes()
+    use_traced = brow_type in shapes
+
     # supersample 倍の解像度で描画
     sh, sw = h * supersample, w * supersample
     mask_hi = np.zeros((sh, sw), dtype=np.float32)
 
     for side in ["right", "left"]:
         anchors = compute_brow_anchors(fm, side=side)
-        polygon = generate_brow_polygon(anchors, brow_type)
+        if use_traced:
+            polygon = generate_brow_polygon_from_shape(
+                anchors, shapes[brow_type],
+                thickness_scale=thickness_scale)
+        else:
+            polygon = generate_brow_polygon(anchors, brow_type)
         polygon_hi = polygon * supersample
         cv2.fillPoly(mask_hi, [polygon_hi], 1.0)
 
@@ -690,13 +813,9 @@ def draw_eyebrows(
     color_rgb: tuple = DEFAULT_EYEBROW_COLOR_RGB,
     intensity: float = DEFAULT_EYEBROW_INTENSITY,
     blur_scale: float = 1.0,
+    thickness_scale: float = 1.0,
 ) -> np.ndarray:
     """眉を描画する（眉消し済み画像が前提）
-
-    シャドウと同じアルファブレンド方式:
-    - ポリゴンマスク → 距離変換で密度グラデーション
-    - 強めのブラーで柔らかいエッジ
-    - 低い強度（0.5程度）で上品に
 
     Args:
         image: 眉消し済み画像 (BGR)
@@ -705,8 +824,11 @@ def draw_eyebrows(
         color_rgb: 眉の色 (R, G, B)
         intensity: 描画強度 0-1
         blur_scale: ブラー倍率
+        thickness_scale: トレース形状の厚み倍率
     """
-    if brow_type not in EYEBROW_TYPES:
+    # トレース形状がある場合は EYEBROW_TYPES になくてもOK
+    shapes = _load_shapes()
+    if brow_type not in EYEBROW_TYPES and brow_type not in shapes:
         raise ValueError(f"Unknown brow type: {brow_type}. Available: {list(EYEBROW_TYPES.keys())}")
 
     h, w = image.shape[:2]
@@ -715,7 +837,7 @@ def draw_eyebrows(
     )
 
     # 眉マスク生成（super-samplingでアンチエイリアス）
-    mask = build_brow_mask(fm, w, h, brow_type)
+    mask = build_brow_mask(fm, w, h, brow_type, thickness_scale=thickness_scale)
 
     # 眉頭/眉尻の濃度グラデーション
     mask = _apply_density_gradient(mask, fm)
@@ -795,10 +917,14 @@ def main():
                         help="眉消しのみ（新しい眉を描画しない）")
     parser.add_argument("--blur", type=float, default=1.0,
                         help="マスクブラー倍率 (default: 1.0)")
+    parser.add_argument("--thickness", type=float, default=1.0,
+                        help="眉の厚み倍率 (default: 1.0, 2.0で2倍太く)")
     parser.add_argument("--imgonly", action="store_true",
                         help="結果画像のみ (比較画像なし)")
     parser.add_argument("--zoom", action="store_true",
                         help="眉元ズームの比較画像を出力")
+    parser.add_argument("--all-types", action="store_true",
+                        help="トレース済み全タイプを一括生成")
     parser.add_argument("--list-types", action="store_true",
                         help="眉タイプ一覧を表示")
     args = parser.parse_args()
@@ -806,7 +932,8 @@ def main():
     if args.list_types:
         print("利用可能な眉タイプ:")
         for name, params in EYEBROW_TYPES.items():
-            print(f"  {name:16s} - {params['desc']}")
+            traced = " [traced]" if name in _load_shapes() else ""
+            print(f"  {name:16s} - {params['desc']}{traced}")
         return
 
     if not args.input:
@@ -826,19 +953,40 @@ def main():
         print("Error: 顔が検出されませんでした")
         return
 
+    # 一括生成モード
+    if args.all_types:
+        shapes = _load_shapes()
+        types_to_run = list(shapes.keys()) if shapes else list(EYEBROW_TYPES.keys())
+        for btype in types_to_run:
+            print(f"\n--- {btype} ---")
+            erased = erase_eyebrows(image, fm, blur_scale=args.blur)
+            result = draw_eyebrows(
+                erased, fm, brow_type=btype,
+                color_rgb=tuple(args.color),
+                intensity=args.intensity,
+                thickness_scale=args.thickness,
+            )
+            out_path = f"eyebrow_{btype}.png"
+            cv2.imwrite(out_path, make_zoom_comparison(image, result, fm))
+            print(f"  出力: {out_path}")
+        print("\n完了!")
+        return
+
     print("眉消し処理中...")
     output = erase_eyebrows(image, fm, blur_scale=args.blur)
 
     if not args.no_draw:
-        print(f"眉描画中... type={args.type}, color={tuple(args.color)}, intensity={args.intensity}")
+        print(f"眉描画中... type={args.type}, color={tuple(args.color)}, "
+              f"intensity={args.intensity}, thickness={args.thickness}")
         output = draw_eyebrows(
             output, fm,
             brow_type=args.type,
             color_rgb=tuple(args.color),
             intensity=args.intensity,
+            thickness_scale=args.thickness,
         )
 
-    out_path = args.output or "eyebrow_result.png"
+    out_path = args.output or f"eyebrow_{args.type}.png"
     if args.imgonly:
         cv2.imwrite(out_path, output)
     elif args.zoom:
