@@ -197,59 +197,97 @@ DEFAULT_EYEBROW_INTENSITY = 0.55           # 適度な濃さ
 
 
 def compute_brow_anchors(fm: FaceMesh, side: str = "right") -> dict:
-    """眉の基準点（眉頭・眉尻）と関連値を計算
+    """眉の基準点を計算（左右対称化済み）
 
-    ルール:
-    - 眉頭: 実際の眉頭ランドマーク位置を使用（小鼻ルールより正確）
-    - 眉尻: 小鼻-目尻延長の黄金比ルール と 実際のランドマーク の広い方を採用
-    - 眉のセンターラインY: 実測ベースで元眉位置に合わせる
+    左右のランドマークから各値を取得し、平均化して顔中心で対称にする。
+    眉山位置は虹彩の外縁を基準に配置。
     """
+    # 両側のランドマークを取得
+    sides_data = {}
+    for s, cfg in [
+        ("right", {
+            "nose_wing": 64, "inner_eye": 133, "outer_eye": 33,
+            "eye_top": 159, "eye_bot": 145,
+            "brow_head": 55, "brow_tail": 46,
+            "iris": [468, 469, 470, 471, 472],
+        }),
+        ("left", {
+            "nose_wing": 294, "inner_eye": 362, "outer_eye": 263,
+            "eye_top": 386, "eye_bot": 374,
+            "brow_head": 285, "brow_tail": 276,
+            "iris": [473, 474, 475, 476, 477],
+        }),
+    ]:
+        d = {k: fm.landmarks_px[v].astype(float) for k, v in cfg.items() if isinstance(v, int)}
+        d["iris_center"] = np.mean([fm.landmarks_px[i].astype(float) for i in cfg["iris"]], axis=0)
+        d["eye_height"] = abs(d["eye_top"][1] - d["eye_bot"][1])
+        sides_data[s] = d
+
+    # 顔中心X
+    face_cx = fm.landmarks_px[1][0].astype(float)
+
+    # 左右の値を平均化して対称にする
+    r, l = sides_data["right"], sides_data["left"]
+
+    # 眉の高さ (Y): 両目の上端から eye_height * 1.85 上
+    avg_eye_height = (r["eye_height"] + l["eye_height"]) / 2
+    avg_eye_top_y = (r["eye_top"][1] + l["eye_top"][1]) / 2
+    head_y = avg_eye_top_y - avg_eye_height * 1.85
+
+    # 眉頭の中心からのオフセット (平均化)
+    r_head_off = abs(r["brow_head"][0] - face_cx)
+    l_head_off = abs(l["brow_head"][0] - face_cx)
+    avg_head_off = (r_head_off + l_head_off) / 2
+
+    # 眉尻の中心からのオフセット
+    # 黄金比ルール vs 実ランドマーク の広い方
+    def tail_offset(sd):
+        nose = sd["nose_wing"]
+        eye = sd["outer_eye"]
+        dx = eye[0] - nose[0]
+        dy = eye[1] - nose[1]
+        if abs(dy) < 1e-3:
+            golden_x = eye[0] + (eye[0] - sd["inner_eye"][0]) * 0.3
+        else:
+            t = (head_y - nose[1]) / dy
+            golden_x = nose[0] + t * dx
+        return max(abs(golden_x - face_cx), abs(sd["brow_tail"][0] - face_cx))
+
+    r_tail_off = tail_offset(r)
+    l_tail_off = tail_offset(l)
+    avg_tail_off = (r_tail_off + l_tail_off) / 2
+
+    # 眉山の位置: 虹彩外縁の真上（中心からのオフセットで対称化）
+    r_iris_off = abs(r["iris_center"][0] - face_cx)
+    l_iris_off = abs(l["iris_center"][0] - face_cx)
+    avg_iris_off = (r_iris_off + l_iris_off) / 2
+
+    # 対称な座標を生成
+    # 右眉: 顔中心のX小(左)側にある、head(鼻寄り)→tail(外側)
+    # 左眉: 顔中心のX大(右)側にある、head(鼻寄り)→tail(外側)
     if side == "right":
-        nose_wing = fm.landmarks_px[64].astype(float)
-        inner_eye = fm.landmarks_px[133].astype(float)
-        outer_eye = fm.landmarks_px[33].astype(float)
-        eye_top = fm.landmarks_px[159].astype(float)
-        eye_bot = fm.landmarks_px[145].astype(float)
-        brow_head_lm = fm.landmarks_px[55].astype(float)   # 実際の眉頭
-        brow_tail_lm = fm.landmarks_px[46].astype(float)    # 実際の眉尻
+        head_x = face_cx - avg_head_off   # 右=X小、鼻寄り(中心に近い)
+        tail_x = face_cx - avg_tail_off   # 右=X小、外側(中心から遠い)
+        iris_x = face_cx - avg_iris_off
     else:
-        nose_wing = fm.landmarks_px[294].astype(float)
-        inner_eye = fm.landmarks_px[362].astype(float)
-        outer_eye = fm.landmarks_px[263].astype(float)
-        eye_top = fm.landmarks_px[386].astype(float)
-        eye_bot = fm.landmarks_px[374].astype(float)
-        brow_head_lm = fm.landmarks_px[285].astype(float)
-        brow_tail_lm = fm.landmarks_px[276].astype(float)
+        head_x = face_cx + avg_head_off   # 左=X大、鼻寄り
+        tail_x = face_cx + avg_tail_off   # 左=X大、外側
+        iris_x = face_cx + avg_iris_off
 
-    eye_height = abs(eye_top[1] - eye_bot[1])
-
-    # 眉頭: 実際のランドマーク位置を使用（小鼻真上より正確）
-    head_x = brow_head_lm[0]
-    head_y = eye_top[1] - eye_height * 1.85
-
-    # 眉尻: 黄金比ルール（小鼻-目尻延長）と実際のランドマークの広い方
-    dx = outer_eye[0] - nose_wing[0]
-    dy = outer_eye[1] - nose_wing[1]
-    if abs(dy) < 1e-3:
-        golden_tail_x = outer_eye[0] + (outer_eye[0] - inner_eye[0]) * 0.3
+    # 眉山のt値を虹彩位置から逆算
+    brow_len = abs(tail_x - head_x)
+    if brow_len > 1e-3:
+        iris_peak_t = abs(iris_x - head_x) / brow_len
+        iris_peak_t = np.clip(iris_peak_t, 0.5, 0.75)
     else:
-        t = (head_y - nose_wing[1]) / dy
-        golden_tail_x = nose_wing[0] + t * dx
-
-    # 実際のランドマーク位置と黄金比のうち、より外側を採用
-    if side == "right":
-        # 右眉: X小 = 外側
-        tail_x = min(golden_tail_x, brow_tail_lm[0])
-    else:
-        # 左眉: X大 = 外側
-        tail_x = max(golden_tail_x, brow_tail_lm[0])
-    tail_y = head_y
+        iris_peak_t = 0.62
 
     return {
         "head": np.array([head_x, head_y], dtype=np.float64),
-        "tail": np.array([tail_x, tail_y], dtype=np.float64),
-        "eye_height": eye_height,
-        "brow_length": abs(tail_x - head_x),
+        "tail": np.array([tail_x, head_y], dtype=np.float64),
+        "eye_height": avg_eye_height,
+        "brow_length": brow_len,
+        "iris_peak_t": iris_peak_t,
         "side": side,
     }
 
@@ -381,6 +419,11 @@ def generate_brow_polygon(anchors: dict, brow_type: str) -> np.ndarray:
     peak_x = head[0] + (tail[0] - head[0]) * peak_t
     peak_y = head[1] - eye_h * params["peak_height_ratio"]
     peak = np.array([peak_x, peak_y])
+
+    # 虹彩ベースの眉山位置を使用（タイプ定義の peak_position をオフセットとして適用）
+    iris_peak_t = anchors.get("iris_peak_t", 0.62)
+    # タイプ定義のpeak_positionで微調整（iris基準 ± 差分）
+    peak_t = iris_peak_t + (peak_t - 0.62) * 0.5
 
     # Catmull-Romで滑らかなセンターライン
     n = 120
