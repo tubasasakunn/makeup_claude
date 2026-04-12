@@ -134,50 +134,50 @@ def erase_eyebrows(
 EYEBROW_TYPES = {
     "straight": {
         "peak_position": 0.55,
-        "peak_height_ratio": 0.25,
+        "peak_height_ratio": 0.15,
         "tail_height_ratio": 0.0,
-        "thickness_ratio": 0.95,
+        "thickness_ratio": 0.5,
         "length_ratio": 1.0,
         "desc": "ストレート眉（直線的・卵型向け）",
     },
     "arch": {
         "peak_position": 0.62,
-        "peak_height_ratio": 0.85,
-        "tail_height_ratio": 0.2,
-        "thickness_ratio": 0.88,
+        "peak_height_ratio": 0.55,
+        "tail_height_ratio": 0.0,
+        "thickness_ratio": 0.48,
         "length_ratio": 1.0,
         "desc": "アーチ眉（緩やかカーブ・丸顔向け）",
     },
     "parallel": {
         "peak_position": 0.5,
-        "peak_height_ratio": 0.05,
+        "peak_height_ratio": 0.03,
         "tail_height_ratio": 0.0,
-        "thickness_ratio": 1.15,
-        "length_ratio": 1.05,
+        "thickness_ratio": 0.58,
+        "length_ratio": 1.0,
         "desc": "平行眉（水平・太め・面長向け）",
     },
     "corner": {
         "peak_position": 0.6,
-        "peak_height_ratio": 1.2,
-        "tail_height_ratio": 0.4,
-        "thickness_ratio": 0.85,
+        "peak_height_ratio": 0.7,
+        "tail_height_ratio": 0.0,
+        "thickness_ratio": 0.48,
         "length_ratio": 0.95,
         "desc": "コーナー眉（上がり眉・ベース型向け）",
     },
     "natural": {
-        "peak_position": 0.55,
-        "peak_height_ratio": 0.4,
-        "tail_height_ratio": 0.25,
-        "thickness_ratio": 0.95,
-        "length_ratio": 1.0,
-        "desc": "ナチュラル眉（自然な下がり・逆三角向け）",
+        "peak_position": 0.6,
+        "peak_height_ratio": 0.3,
+        "tail_height_ratio": 0.0,
+        "thickness_ratio": 0.5,
+        "length_ratio": 0.9,
+        "desc": "ナチュラル眉（自然・逆三角向け）",
     },
 }
 
 # デフォルト設定
 DEFAULT_EYEBROW_TYPE = "straight"
-DEFAULT_EYEBROW_COLOR_RGB = (85, 60, 45)   # 濃いめブラウン（眉山を見やすく）
-DEFAULT_EYEBROW_INTENSITY = 0.7            # 濃度を上げてハッキリ
+DEFAULT_EYEBROW_COLOR_RGB = (85, 60, 45)   # 濃いめブラウン
+DEFAULT_EYEBROW_INTENSITY = 0.75           # ハッキリ
 
 
 def compute_brow_anchors(fm: FaceMesh, side: str = "right") -> dict:
@@ -449,6 +449,43 @@ def _peak_bump(t: float, peak_t: float, peak_height: float,
     return peak_height * math.exp(-x * x)
 
 
+def _corner_peak(t: float, peak_t: float, peak_height: float,
+                 rise_len: float = 0.18, fall_len: float = 0.10) -> float:
+    """コーナー眉用: 区分線形で鋭い折れ曲がりを作る
+
+    - 0 〜 (peak_t - rise_len): 0 (平坦)
+    - (peak_t - rise_len) 〜 peak_t: 線形に 0 → peak_height
+    - peak_t 〜 (peak_t + fall_len): 線形に peak_height → 0
+    - (peak_t + fall_len) 〜 1: 0 (平坦)
+    """
+    rise_start = peak_t - rise_len
+    fall_end = peak_t + fall_len
+    if t <= rise_start:
+        return 0.0
+    if t <= peak_t:
+        return peak_height * (t - rise_start) / rise_len
+    if t <= fall_end:
+        return peak_height * (1.0 - (t - peak_t) / fall_len)
+    return 0.0
+
+
+def _arch_peak(t: float, peak_t: float, peak_height: float) -> float:
+    """アーチ眉用: 眉頭から滑らかに立ち上がる広いアーチ"""
+    import math
+    # 全区間で cos^2 に近い形で盛り上げる（広く、ピーク周辺がなめらか）
+    sigma = 0.32
+    x = (t - peak_t) / sigma
+    return peak_height * math.exp(-x * x)
+
+
+def _gentle_peak(t: float, peak_t: float, peak_height: float,
+                 sigma: float = 0.28) -> float:
+    """straight/natural 用: 控えめな対称ガウシアン"""
+    import math
+    x = (t - peak_t) / max(sigma, 1e-6)
+    return peak_height * math.exp(-x * x)
+
+
 def generate_brow_polygon(anchors: dict, brow_type: str) -> np.ndarray:
     """眉タイプに応じた上下ラインを生成してポリゴン頂点列を返す
 
@@ -487,23 +524,23 @@ def generate_brow_polygon(anchors: dict, brow_type: str) -> np.ndarray:
         lower[i] = head + (tail - head) * t
 
     # 上辺: 下辺から上方向に (厚さ + 眉山バンプ) で盛る
-    # 非対称ガウシアンで頭側を緩やか、尻側を急に
-    # タイプ別にピーク形状を調整
+    # タイプ別のピーク関数を使用
     if brow_type == "corner":
-        sigma_left, sigma_right = 0.22, 0.15  # 頭側やや広く、尻側狭い
+        peak_fn = lambda t: _corner_peak(t, peak_t, peak_height,
+                                         rise_len=0.20, fall_len=0.12)
     elif brow_type == "arch":
-        sigma_left, sigma_right = 0.30, 0.25  # 広めで緩やか
+        peak_fn = lambda t: _arch_peak(t, peak_t, peak_height)
     elif brow_type == "natural":
-        sigma_left, sigma_right = 0.30, 0.28  # ほぼ対称
+        peak_fn = lambda t: _gentle_peak(t, peak_t, peak_height, sigma=0.30)
     elif brow_type == "straight":
-        sigma_left, sigma_right = 0.35, 0.30  # 非常に広く浅い
+        peak_fn = lambda t: _gentle_peak(t, peak_t, peak_height, sigma=0.35)
     else:  # parallel
-        sigma_left, sigma_right = 0.40, 0.40  # 超広く、ほぼ直線
+        peak_fn = lambda t: _gentle_peak(t, peak_t, peak_height, sigma=0.45)
 
     upper = np.zeros((n, 2))
     for i, t in enumerate(ts):
         thickness = base_thickness * _taper(t, sharp=sharp)
-        bump = _peak_bump(t, peak_t, peak_height, sigma_left, sigma_right)
+        bump = peak_fn(t)
         # 上辺 = 下辺 - (厚さ + 眉山盛り上がり)
         upper[i, 0] = lower[i, 0]
         upper[i, 1] = lower[i, 1] - (thickness + bump)
