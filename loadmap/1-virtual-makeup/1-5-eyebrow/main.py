@@ -302,6 +302,60 @@ def _solve_bezier_control(p0: np.ndarray, pm: np.ndarray, p2: np.ndarray,
 SHARP_BROW_TYPES = {"corner", "arch", "straight"}
 
 
+def _asymmetric_centerline(head: np.ndarray, peak: np.ndarray, tail: np.ndarray,
+                           n: int = 120, head_flat: float = 0.5) -> np.ndarray:
+    """頭側を平らに保ち、眉山で折れ曲がり、眉尻に向かって下がる非対称な中心線
+
+    - Head → Peak 区間: head付近を平らに保ち、peak近くで上昇（ease-in）
+    - Peak → Tail 区間: peak から tail に向かって下降（ease-out）
+
+    head_flat: 頭側の「平らな区間」の比率 (0-1)
+               0.5 なら、head-peak 区間の前半50%は head_y に近い位置を維持
+    """
+    # head → peak と peak → tail に分割
+    # 長さの比で点数配分
+    head_peak_len = np.linalg.norm(peak - head)
+    peak_tail_len = np.linalg.norm(tail - peak)
+    total = head_peak_len + peak_tail_len
+    if total < 1e-3:
+        return np.tile(head, (n, 1))
+
+    n1 = max(2, int(n * head_peak_len / total))
+    n2 = n - n1 + 1
+
+    # Section 1: Head → Peak
+    # 二次Bezier: 制御点を head_y 付近・peak 寄りに置くと、頭側が平らになる
+    ctrl1 = np.array([
+        head[0] + (peak[0] - head[0]) * head_flat,  # peak 方向に head_flat 分進む
+        head[1],                                      # Y は head のまま（平ら）
+    ])
+    ts1 = np.linspace(0, 1, n1)
+    seg1 = np.zeros((n1, 2))
+    for i, t in enumerate(ts1):
+        seg1[i] = (1 - t) ** 2 * head + 2 * (1 - t) * t * ctrl1 + t ** 2 * peak
+
+    # Section 2: Peak → Tail
+    # 二次Bezier: 制御点を peak_y の少し下、tail 寄り
+    # peak を通過後すぐに下降（ease-out）
+    peak_y_level_ctrl = np.array([
+        peak[0] + (tail[0] - peak[0]) * 0.35,  # peak から 35% 進んだ位置
+        peak[1] + (tail[1] - peak[1]) * 0.7,   # Y は tail 寄り (急降下)
+    ])
+    ts2 = np.linspace(0, 1, n2)
+    seg2 = np.zeros((n2, 2))
+    for i, t in enumerate(ts2):
+        seg2[i] = (1 - t) ** 2 * peak + 2 * (1 - t) * t * peak_y_level_ctrl + t ** 2 * tail
+
+    # 結合 (seg1 の最後と seg2 の最初は peak で同じ)
+    center_line = np.vstack([seg1, seg2[1:]])
+
+    # n 点にリサンプル
+    if len(center_line) != n:
+        idx = np.linspace(0, len(center_line) - 1, n).astype(int)
+        center_line = center_line[idx]
+    return center_line
+
+
 def _catmull_rom_centerline(head: np.ndarray, peak: np.ndarray, tail: np.ndarray,
                             peak_t: float, n: int = 100) -> np.ndarray:
     """5制御点 + Catmull-Romスプラインで滑らかな中心線を生成
@@ -404,13 +458,13 @@ def generate_brow_polygon(anchors: dict, brow_type: str) -> np.ndarray:
     peak_y = head[1] - eye_h * params["peak_height_ratio"]
     peak = np.array([peak_x, peak_y])
 
-    # 眉山位置: タイプ定義の peak_position をそのまま使う
-    # (iris_peak_t は参考値としてのみ保持)
-    peak_t = params["peak_position"]
-
-    # Catmull-Romで滑らかなセンターライン
+    # 頭側は平ら、眉山で折れ、眉尻に下降する非対称カーブ
+    # peak_position が大きいほど眉山がtail寄りになる
     n = 120
-    center_line = _catmull_rom_centerline(head, peak, tail, peak_t, n=n)
+    # head_flat: peak_position によって調整（peak が遠いほど平らな区間を長く）
+    head_flat = 0.5 + (params["peak_position"] - 0.5) * 0.5
+    head_flat = max(0.35, min(0.7, head_flat))
+    center_line = _asymmetric_centerline(head, peak, tail, n=n, head_flat=head_flat)
 
     base_thickness = eye_h * params["thickness_ratio"]
 
