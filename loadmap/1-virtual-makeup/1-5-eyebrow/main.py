@@ -434,12 +434,30 @@ def _taper(t: float, sharp: bool = False) -> float:
             return 0.35 * (1 - x) + 0.1 * x
 
 
+def _peak_bump(t: float, peak_t: float, peak_height: float,
+               sigma_left: float = 0.25, sigma_right: float = 0.18) -> float:
+    """眉山の盛り上がり量を計算（非対称ガウシアンバンプ）
+
+    t < peak_t: sigma_left (緩やかな上昇)
+    t > peak_t: sigma_right (急峻な下降)
+
+    返り値: t 位置でのピーク上昇量（0 〜 peak_height）
+    """
+    import math
+    sigma = sigma_left if t < peak_t else sigma_right
+    x = (t - peak_t) / max(sigma, 1e-6)
+    return peak_height * math.exp(-x * x)
+
+
 def generate_brow_polygon(anchors: dict, brow_type: str) -> np.ndarray:
     """眉タイプに応じた上下ラインを生成してポリゴン頂点列を返す
 
-    - Catmull-Romスプラインで滑らかなセンターライン
-    - 接線→法線方向にオフセットで自然な厚み
-    - タイプ別テーパー: sharp なタイプは先端 0 収束、rounded は丸留め
+    **下辺は直線**（眉骨ラインに沿う）、**上辺だけに眉山を乗せる**方式。
+    これにより「眉山で下辺がくぼむ」現象を防ぐ。
+
+    - 下辺: head から tail への直線
+    - 上辺: 下辺 - (thickness(taper) + peak_bump) で上方向へ盛る
+    - 眉山は非対称ガウシアンで、頭側を平らに保つ
     """
     params = EYEBROW_TYPES[brow_type]
 
@@ -451,48 +469,48 @@ def generate_brow_polygon(anchors: dict, brow_type: str) -> np.ndarray:
     if length_ratio != 1.0:
         tail = head + (tail - head) * length_ratio
 
+    # tail_height_ratio: 下辺の末端を少し下げる
     tail[1] += eye_h * params["tail_height_ratio"]
 
-    peak_t = params["peak_position"]
-    peak_x = head[0] + (tail[0] - head[0]) * peak_t
-    peak_y = head[1] - eye_h * params["peak_height_ratio"]
-    peak = np.array([peak_x, peak_y])
-
-    # 頭側は平ら、眉山で折れ、眉尻に下降する非対称カーブ
-    # peak_position が大きいほど眉山がtail寄りになる
-    n = 120
-    # head_flat: peak_position によって調整（peak が遠いほど平らな区間を長く）
-    head_flat = 0.5 + (params["peak_position"] - 0.5) * 0.5
-    head_flat = max(0.35, min(0.7, head_flat))
-    center_line = _asymmetric_centerline(head, peak, tail, n=n, head_flat=head_flat)
-
     base_thickness = eye_h * params["thickness_ratio"]
+    peak_height = eye_h * params["peak_height_ratio"]
+    peak_t = params["peak_position"]
 
-    # 接線→法線
-    tangents = np.zeros_like(center_line)
-    tangents[0] = center_line[1] - center_line[0]
-    tangents[-1] = center_line[-1] - center_line[-2]
-    tangents[1:-1] = (center_line[2:] - center_line[:-2]) / 2
-    lengths = np.linalg.norm(tangents, axis=1, keepdims=True)
-    lengths = np.maximum(lengths, 1e-6)
-    tangents /= lengths
-    normals = np.stack([-tangents[:, 1], tangents[:, 0]], axis=1)
-
-    # タイプ別テーパー
     sharp = brow_type in SHARP_BROW_TYPES
 
+    n = 120
     ts = np.linspace(0, 1, n)
-    upper = np.zeros_like(center_line)
-    lower = np.zeros_like(center_line)
+
+    # 下辺: head から tail への直線
+    lower = np.zeros((n, 2))
     for i, t in enumerate(ts):
-        half_thick = base_thickness * 0.5 * _taper(t, sharp=sharp)
-        upper[i] = center_line[i] - normals[i] * half_thick
-        lower[i] = center_line[i] + normals[i] * half_thick
+        lower[i] = head + (tail - head) * t
+
+    # 上辺: 下辺から上方向に (厚さ + 眉山バンプ) で盛る
+    # 非対称ガウシアンで頭側を緩やか、尻側を急に
+    # タイプ別にピーク形状を調整
+    if brow_type == "corner":
+        sigma_left, sigma_right = 0.22, 0.15  # 頭側やや広く、尻側狭い
+    elif brow_type == "arch":
+        sigma_left, sigma_right = 0.30, 0.25  # 広めで緩やか
+    elif brow_type == "natural":
+        sigma_left, sigma_right = 0.30, 0.28  # ほぼ対称
+    elif brow_type == "straight":
+        sigma_left, sigma_right = 0.35, 0.30  # 非常に広く浅い
+    else:  # parallel
+        sigma_left, sigma_right = 0.40, 0.40  # 超広く、ほぼ直線
+
+    upper = np.zeros((n, 2))
+    for i, t in enumerate(ts):
+        thickness = base_thickness * _taper(t, sharp=sharp)
+        bump = _peak_bump(t, peak_t, peak_height, sigma_left, sigma_right)
+        # 上辺 = 下辺 - (厚さ + 眉山盛り上がり)
+        upper[i, 0] = lower[i, 0]
+        upper[i, 1] = lower[i, 1] - (thickness + bump)
 
     # sharp タイプは先端を1点に完全収束
     if sharp:
-        upper[-1] = center_line[-1]
-        lower[-1] = center_line[-1]
+        upper[-1] = lower[-1]
 
     polygon = np.vstack([upper, lower[::-1]])
     return polygon.astype(np.int32)
