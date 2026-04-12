@@ -328,5 +328,425 @@ def put_label(img, text: str, org, color=(255, 255, 255),
     )
 
 
+def draw_line_outlined(img, a, b, color=(0, 255, 255),
+                       thickness: int = 2, outline_color=(0, 0, 0),
+                       outline: int = 1):
+    """縁取り付きの線（ダーク縁で視認性アップ）"""
+    import cv2
+    a = tuple(int(x) for x in a)
+    b = tuple(int(x) for x in b)
+    if outline > 0:
+        cv2.line(img, a, b, outline_color, thickness + outline * 2, cv2.LINE_AA)
+    cv2.line(img, a, b, color, thickness, cv2.LINE_AA)
+
+
+def draw_point_outlined(img, p, color=(0, 255, 255), r: int = 5,
+                        outline_color=(0, 0, 0), outline: int = 1):
+    """縁取り付きの点"""
+    import cv2
+    p = tuple(int(x) for x in p)
+    if outline > 0:
+        cv2.circle(img, p, r + outline, outline_color, -1, cv2.LINE_AA)
+    cv2.circle(img, p, r, color, -1, cv2.LINE_AA)
+
+
+def draw_text_outlined(img, text: str, org, color=(255, 255, 255),
+                       scale: float = 0.6, thickness: int = 1,
+                       outline_color=(0, 0, 0), outline: int = 2):
+    """黒縁取り付きテキスト (背景ボックス無しで画面に浮かせる)"""
+    import cv2
+    x, y = int(org[0]), int(org[1])
+    if outline > 0:
+        cv2.putText(
+            img, text, (x, y), cv2.FONT_HERSHEY_SIMPLEX, scale,
+            outline_color, thickness + outline * 2, cv2.LINE_AA,
+        )
+    cv2.putText(
+        img, text, (x, y), cv2.FONT_HERSHEY_SIMPLEX, scale,
+        color, thickness, cv2.LINE_AA,
+    )
+
+
+# ----------------------------------------------------------
+# レポートパネル レンダラー (UI/UX 改善版) - PIL で日本語対応
+# ----------------------------------------------------------
+# テーマカラー (RGB for PIL)
+_THEME = {
+    "bg": (32, 32, 38),              # パネル背景
+    "bg_section": (48, 48, 58),      # セクション帯
+    "fg": (230, 230, 235),           # 本文
+    "fg_dim": (150, 150, 160),       # サブテキスト
+    "accent": (80, 210, 255),        # アクセント (水色)
+    "accent2": (140, 255, 160),      # 成功 (緑)
+    "accent3": (255, 200, 80),       # 注意 (黄)
+    "divider": (78, 78, 90),         # 区切り線
+    "bar_bg": (55, 55, 65),          # バー背景
+    "bar_dim": (110, 110, 125),      # バー非ハイライト
+}
+
+_JP_FONT = "/etc/alternatives/fonts-japanese-gothic.ttf"
+_MONO_FONT = "/usr/share/fonts/truetype/dejavu/DejaVuSansMono-Bold.ttf"
+_font_cache: dict = {}
+
+
+def _get_font(size: int, mono: bool = False):
+    from PIL import ImageFont
+    key = (size, mono)
+    if key in _font_cache:
+        return _font_cache[key]
+    path = _MONO_FONT if mono else _JP_FONT
+    try:
+        f = ImageFont.truetype(path, size)
+    except Exception:
+        f = ImageFont.load_default()
+    _font_cache[key] = f
+    return f
+
+
+def _pil_text_size(draw, text: str, font) -> tuple[int, int]:
+    """テキストの (width, height) を返す (PIL バージョン差を吸収)"""
+    try:
+        left, top, right, bottom = draw.textbbox((0, 0), text, font=font)
+        return right - left, bottom - top
+    except AttributeError:
+        return draw.textsize(text, font=font)
+
+
+def _bgr_to_rgb(c):
+    if len(c) >= 3:
+        return (int(c[2]), int(c[1]), int(c[0]))
+    return c
+
+
+def _rgb_to_bgr(c):
+    return (int(c[2]), int(c[1]), int(c[0]))
+
+
+def render_report_panel(spec: list, width: int, height: int) -> "np.ndarray":
+    """レポートパネルをレンダリングする (PIL / 日本語対応)
+
+    spec の各要素は以下の tuple のいずれか:
+      ('title', text, color_bgr)                大きなタイトル
+      ('subtitle', text)                        副タイトル
+      ('section', text)                         セクションヘッダ (背景帯)
+      ('kv', key, value, [color_bgr])           キーバリュー行 (右詰め値)
+      ('bar', label, value_0_1, is_best, text)  横向きバー
+      ('text', text, [color_bgr])               自由テキスト
+      ('divider',)                              水平区切り線
+      ('spacer', height_px)                     縦方向の余白
+      ('big', text, color_bgr)                  超大見出し
+      ('radar', labels, values, highlight_idx, fill_bgr)
+          レーダーチャート (width-48 幅の正方形) を現在位置に描画
+    """
+    from PIL import Image, ImageDraw
+    img = Image.new("RGB", (width, height), _THEME["bg"])
+    draw = ImageDraw.Draw(img)
+
+    # フォント (UI/UX レビュー反映: 全体的にサイズアップ)
+    f_big = _get_font(56)       # big
+    f_title = _get_font(30)     # title
+    f_section = _get_font(20)   # section
+    f_kv_key = _get_font(18)    # kv key
+    f_kv_val = _get_font(20, mono=True)  # kv value
+    f_bar = _get_font(17)       # bar label
+    f_bar_val = _get_font(16, mono=True)
+    f_text = _get_font(16)      # text
+    f_sub = _get_font(15)       # subtitle
+
+    pad_x = 26
+    y = 28
+
+    for item in spec:
+        tag = item[0]
+
+        if tag == "title":
+            text, color = item[1], _bgr_to_rgb(item[2])
+            draw.text((pad_x, y), text, font=f_title, fill=color)
+            y += 42
+
+        elif tag == "big":
+            text, color = item[1], _bgr_to_rgb(item[2])
+            draw.text((pad_x, y), text, font=f_big, fill=color)
+            y += 68
+
+        elif tag == "subtitle":
+            draw.text((pad_x, y), item[1], font=f_sub, fill=_THEME["fg_dim"])
+            y += 28
+
+        elif tag == "section":
+            # 背景帯
+            draw.rectangle(
+                [(pad_x - 14, y - 4), (width - pad_x + 14, y + 30)],
+                fill=_THEME["bg_section"],
+            )
+            # 左端のアクセント棒
+            draw.rectangle(
+                [(pad_x - 14, y - 4), (pad_x - 8, y + 30)],
+                fill=_THEME["accent"],
+            )
+            draw.text((pad_x, y + 4), item[1], font=f_section,
+                      fill=_THEME["accent"])
+            y += 42
+
+        elif tag == "kv":
+            key = item[1]
+            value = item[2]
+            color = _bgr_to_rgb(item[3]) if len(item) > 3 else _THEME["fg"]
+            draw.text((pad_x, y), key, font=f_kv_key, fill=_THEME["fg_dim"])
+            vw, _vh = _pil_text_size(draw, value, f_kv_val)
+            draw.text(
+                (width - pad_x - vw, y - 2),
+                value, font=f_kv_val, fill=color,
+            )
+            y += 28
+
+        elif tag == "bar":
+            label = item[1]
+            value = max(0.0, min(1.0, float(item[2])))
+            is_best = bool(item[3])
+            numeric = item[4] if len(item) > 4 else f"{value:.2f}"
+            col = _THEME["accent"] if is_best else _THEME["bar_dim"]
+            label_col = _THEME["fg"] if is_best else _THEME["fg_dim"]
+            num_w, _ = _pil_text_size(draw, numeric, f_bar_val)
+            # ラベル (上の行)
+            draw.text((pad_x, y), label, font=f_bar, fill=label_col)
+            y += 22
+            # バー背景
+            bar_x0 = pad_x
+            bar_x1 = width - pad_x - num_w - 10
+            bar_y0 = y + 2
+            bar_y1 = y + 16
+            draw.rectangle(
+                [(bar_x0, bar_y0), (bar_x1, bar_y1)],
+                fill=_THEME["bar_bg"],
+            )
+            fill_x = bar_x0 + int((bar_x1 - bar_x0) * value)
+            if fill_x > bar_x0:
+                draw.rectangle([(bar_x0, bar_y0), (fill_x, bar_y1)], fill=col)
+            # 数値
+            draw.text(
+                (bar_x1 + 8, y - 2),
+                numeric, font=f_bar_val, fill=label_col,
+            )
+            y += 22
+
+        elif tag == "text":
+            text = item[1]
+            color = _bgr_to_rgb(item[2]) if len(item) > 2 else _THEME["fg"]
+            draw.text((pad_x, y), text, font=f_text, fill=color)
+            y += 24
+
+        elif tag == "divider":
+            draw.line(
+                [(pad_x, y), (width - pad_x, y)],
+                fill=_THEME["divider"], width=1,
+            )
+            y += 14
+
+        elif tag == "spacer":
+            y += int(item[1])
+
+        elif tag == "radar":
+            # 現在位置に正方形エリアでレーダーを描画
+            labels = item[1]
+            values = item[2]
+            highlight_idx = item[3] if len(item) > 3 else None
+            fill_bgr = item[4] if len(item) > 4 else (80, 210, 255)
+            remaining = height - y - 10
+            size = min(width - pad_x * 2, remaining)
+            if size >= 80:
+                cx = width // 2
+                cy = y + size // 2
+                radius = int(size * 0.42)
+                # 一旦 PIL を numpy に書き戻して描画ヘルパー共用
+                arr = np.array(img)[:, :, ::-1].copy()
+                draw_radar_chart(
+                    arr, (cx, cy), radius,
+                    labels=labels, values=values,
+                    max_value=max(values) if values else 1.0,
+                    fill_color=fill_bgr, highlight_idx=highlight_idx,
+                    highlight_color=fill_bgr, size_label=14,
+                )
+                img = Image.fromarray(arr[:, :, ::-1])
+                draw = ImageDraw.Draw(img, "RGBA")
+                y += size + 10
+
+        if y >= height - 10:
+            break
+
+    # RGB → BGR (OpenCV 互換)
+    arr = np.array(img)[:, :, ::-1].copy()
+    return arr
+
+
+def draw_pil_text(image: "np.ndarray", text: str, org, color=(255, 255, 255),
+                  size: int = 20, outline_color=(0, 0, 0), outline: int = 2,
+                  bg: tuple | None = None, bg_alpha: float = 0.65,
+                  bg_pad: int = 4):
+    """BGR numpy 画像に PIL で日本語テキストを描画 (黒縁 or 半透明背景)
+
+    bg: (B,G,R) を指定すると、その色の半透明ボックスを背景に敷く
+    """
+    from PIL import Image, ImageDraw
+    pil = Image.fromarray(image[:, :, ::-1])
+    draw = ImageDraw.Draw(pil, "RGBA")
+    font = _get_font(size)
+    x, y = int(org[0]), int(org[1])
+    rgb = _bgr_to_rgb(color)
+
+    if bg is not None:
+        # 背景ボックス (半透明)
+        tw, th = _pil_text_size(draw, text, font)
+        bg_rgb = _bgr_to_rgb(bg)
+        alpha = int(255 * bg_alpha)
+        draw.rectangle(
+            [
+                (x - bg_pad, y - bg_pad),
+                (x + tw + bg_pad, y + th + bg_pad),
+            ],
+            fill=(bg_rgb[0], bg_rgb[1], bg_rgb[2], alpha),
+        )
+        draw.text((x, y), text, font=font, fill=rgb)
+    else:
+        outline_rgb = _bgr_to_rgb(outline_color)
+        if outline > 0:
+            for dx in range(-outline, outline + 1):
+                for dy in range(-outline, outline + 1):
+                    if dx == 0 and dy == 0:
+                        continue
+                    draw.text((x + dx, y + dy), text, font=font,
+                              fill=outline_rgb)
+        draw.text((x, y), text, font=font, fill=rgb)
+
+    image[:] = np.array(pil)[:, :, ::-1]
+    return image
+
+
+def draw_pil_pill(image: "np.ndarray", text: str, org,
+                  text_color=(255, 255, 255), pill_color=(50, 180, 255),
+                  size: int = 22, pad_x: int = 12, pad_y: int = 6,
+                  radius: int = 14):
+    """ピル型バッジを描画 (annotated 画像の左上バッジなど)"""
+    from PIL import Image, ImageDraw
+    pil = Image.fromarray(image[:, :, ::-1])
+    draw = ImageDraw.Draw(pil, "RGBA")
+    font = _get_font(size)
+    x, y = int(org[0]), int(org[1])
+    tw, th = _pil_text_size(draw, text, font)
+    # 半透明黒の外枠
+    draw.rounded_rectangle(
+        [(x - 2, y - 2), (x + tw + pad_x * 2 + 2, y + th + pad_y * 2 + 2)],
+        radius=radius + 2, fill=(0, 0, 0, 160),
+    )
+    # アクセント色のピル
+    pill_rgb = _bgr_to_rgb(pill_color)
+    draw.rounded_rectangle(
+        [(x, y), (x + tw + pad_x * 2, y + th + pad_y * 2)],
+        radius=radius, fill=(pill_rgb[0], pill_rgb[1], pill_rgb[2], 230),
+    )
+    # テキスト (黒、濃いめ)
+    text_rgb = _bgr_to_rgb(text_color)
+    draw.text((x + pad_x, y + pad_y), text, font=font, fill=text_rgb)
+
+    image[:] = np.array(pil)[:, :, ::-1]
+    return image
+
+
+def draw_radar_chart(image: "np.ndarray", center, radius: int,
+                     labels: list[str], values: list[float],
+                     max_value: float = 1.0,
+                     bg_color=(40, 40, 48), axis_color=(100, 100, 115),
+                     fill_color=(80, 210, 255), label_color=(220, 220, 230),
+                     highlight_idx: int | None = None,
+                     highlight_color=(80, 210, 255),
+                     size_label: int = 13):
+    """レーダーチャートを image に描画
+
+    labels / values は同数。values は 0..max_value 推奨。
+    highlight_idx が指定されると、その軸の点を強調する。
+    """
+    import math
+    from PIL import Image, ImageDraw
+
+    pil = Image.fromarray(image[:, :, ::-1])
+    draw = ImageDraw.Draw(pil, "RGBA")
+    cx, cy = int(center[0]), int(center[1])
+    n = len(values)
+    if n < 3:
+        return image
+
+    # 各軸の角度 (上から時計回り)
+    def axis_xy(i, r):
+        angle = -math.pi / 2 + 2 * math.pi * i / n
+        return cx + r * math.cos(angle), cy + r * math.sin(angle)
+
+    # 格子 (25%, 50%, 75%, 100%)
+    for ring in [0.25, 0.5, 0.75, 1.0]:
+        pts = [axis_xy(i, radius * ring) for i in range(n)]
+        draw.polygon(pts, outline=axis_color, fill=None)
+
+    # 軸線
+    for i in range(n):
+        draw.line([(cx, cy), axis_xy(i, radius)], fill=axis_color, width=1)
+
+    # 値ポリゴン
+    val_pts = [
+        axis_xy(i, radius * min(1.0, values[i] / max(max_value, 1e-6)))
+        for i in range(n)
+    ]
+    fill_rgb = _bgr_to_rgb(fill_color)
+    draw.polygon(val_pts, outline=fill_rgb,
+                 fill=(fill_rgb[0], fill_rgb[1], fill_rgb[2], 80))
+
+    # 頂点
+    for i, p in enumerate(val_pts):
+        px, py = int(p[0]), int(p[1])
+        is_h = i == highlight_idx
+        col = _bgr_to_rgb(highlight_color) if is_h else fill_rgb
+        r_pt = 5 if is_h else 3
+        draw.ellipse(
+            [(px - r_pt, py - r_pt), (px + r_pt, py + r_pt)],
+            fill=col, outline=(0, 0, 0, 180), width=1,
+        )
+
+    # ラベル
+    font = _get_font(size_label)
+    label_rgb = _bgr_to_rgb(label_color)
+    for i, name in enumerate(labels):
+        lx, ly = axis_xy(i, radius + 12)
+        tw, th = _pil_text_size(draw, name, font)
+        # ラベル位置調整: 軸の方向に応じてアンカー
+        angle = -math.pi / 2 + 2 * math.pi * i / n
+        if math.cos(angle) < -0.3:
+            lx -= tw
+        elif -0.3 <= math.cos(angle) <= 0.3:
+            lx -= tw / 2
+        if math.sin(angle) < -0.3:
+            ly -= th
+        elif -0.3 <= math.sin(angle) <= 0.3:
+            ly -= th / 2
+        draw.text((lx, ly), name, font=font, fill=label_rgb)
+
+    image[:] = np.array(pil)[:, :, ::-1]
+    return image
+
+
+def compose_report(before, annotated, panel):
+    """[before | annotated | panel] を横連結"""
+    import cv2
+    h = max(before.shape[0], annotated.shape[0], panel.shape[0])
+    # 高さを揃える (不足分は黒埋め)
+    def _pad_h(img, target_h):
+        if img.shape[0] == target_h:
+            return img
+        pad = np.zeros(
+            (target_h - img.shape[0], img.shape[1], 3), dtype=np.uint8
+        )
+        return np.vstack([img, pad])
+
+    return np.hstack([_pad_h(before, h), _pad_h(annotated, h), _pad_h(panel, h)])
+
+
+
 def make_side_by_side(before, after):
     return np.hstack([before, after])

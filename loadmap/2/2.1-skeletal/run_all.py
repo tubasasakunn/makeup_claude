@@ -14,7 +14,7 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 from shared.facemesh import FaceMesh
 from shared.face_metrics import make_side_by_side
-from main import classify, visualize
+from main import build_report, classify, visualize
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 IMGS_DIR = PROJECT_ROOT / "imgs"
@@ -64,10 +64,9 @@ def main():
             f"{k}={v:.3f}" for k, v in sorted(result.scores.items(), key=lambda kv: -kv[1])
         ))
 
-        vis = visualize(image, fm, result)
-        comparison = make_side_by_side(image, vis)
+        report = build_report(image, fm, result)
         out_path = OUTPUT_DIR / f"result_{img_path.stem}.png"
-        cv2.imwrite(str(out_path), comparison)
+        cv2.imwrite(str(out_path), report)
         print(f"  出力: {out_path.name}")
         results.append((img_path.stem, result))
 

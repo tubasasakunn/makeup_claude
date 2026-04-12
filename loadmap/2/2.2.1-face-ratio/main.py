@@ -39,11 +39,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 from shared.facemesh import FaceMesh
 from shared.face_metrics import (
     LM,
-    draw_line,
-    draw_point,
+    compose_report,
+    draw_line_outlined,
+    draw_pil_pill,
+    draw_pil_text,
+    draw_point_outlined,
     make_side_by_side,
     measure,
-    put_label,
+    render_report_panel,
 )
 
 
@@ -171,105 +174,195 @@ def analyze(fm: FaceMesh) -> FaceRatioResult:
 
 
 # ==============================================================
-# 可視化
+# 可視化 (UI/UX 改善版: レポートパネル + annotate 分離)
 # ==============================================================
-COLOR_H = (0, 220, 255)   # 縦軸 黄
-COLOR_W = (255, 200, 0)   # 横軸 水色
-COLOR_G = (180, 255, 180) # 参考補助線
+C_H = (80, 220, 255)     # 縦軸 アンバー
+C_W = (255, 200, 80)     # 横軸 シアン
+C_G = (140, 255, 160)    # 理想比参照線 グリーン
+C_E = (180, 180, 255)    # 補正 (extended) ピンク淡
+
+RATIO_JP = {
+    "golden": "黄金比 1.618",
+    "silver": "白銀比 1.414",
+    "japanese": "日本人 1.460",
+}
+RATIO_COLOR = {
+    "golden": (80, 220, 255),
+    "silver": (180, 220, 90),
+    "japanese": (140, 255, 160),
+}
 
 
-def visualize(image: np.ndarray, fm: FaceMesh, r: FaceRatioResult) -> np.ndarray:
-    img = image.copy()
+def annotate_face(image: np.ndarray, fm: FaceMesh, r: FaceRatioResult,
+                  scale: float = 1.0) -> np.ndarray:
+    """顔画像に縦横寸法と理想比率を重ねる"""
+    if scale != 1.0:
+        img = cv2.resize(
+            image, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC,
+        )
+    else:
+        img = image.copy()
     h, w = img.shape[:2]
 
-    p_top = fm.landmarks_px[LM.FOREHEAD_TOP].astype(np.float64)
-    p_chin = fm.landmarks_px[LM.CHIN_BOTTOM].astype(np.float64)
-    p_tr = fm.landmarks_px[LM.TEMPLE_R].astype(np.float64)
-    p_tl = fm.landmarks_px[LM.TEMPLE_L].astype(np.float64)
+    def S(p):
+        return (float(p[0]) * scale, float(p[1]) * scale)
 
-    # 補正した生え際位置（おでこ上部から face_height_px_raw*0.25 上）
-    ext = (r.face_height_px - r.face_height_px_raw)
-    p_top_ext = p_top + (p_top - p_chin) / max(r.face_height_px_raw, 1.0) * ext
+    p_top = S(fm.landmarks_px[LM.FOREHEAD_TOP])
+    p_chin = S(fm.landmarks_px[LM.CHIN_BOTTOM])
+    p_tr = S(fm.landmarks_px[LM.TEMPLE_R])
+    p_tl = S(fm.landmarks_px[LM.TEMPLE_L])
 
-    # --- 縦軸 ---
-    draw_line(img, p_top_ext, p_chin, COLOR_H, 2)
-    draw_point(img, p_top_ext, COLOR_H, 4)
-    draw_point(img, p_top, (0, 180, 220), 3)  # raw
-    draw_point(img, p_chin, COLOR_H, 4)
+    # 補正した生え際 (scale 済み)
+    ext_raw = r.face_height_px - r.face_height_px_raw  # original px
+    ext = ext_raw * scale
+    # 方向 (上向き)
+    dy_top_chin = (p_top[1] - p_chin[1])
+    ext_len = abs(dy_top_chin) if abs(dy_top_chin) > 1e-3 else 1.0
+    dy_unit = dy_top_chin / ext_len
+    p_top_ext = (p_top[0], p_top[1] + dy_unit * ext)
 
-    # --- 横軸 ---
-    draw_line(img, p_tr, p_tl, COLOR_W, 2)
-    draw_point(img, p_tr, COLOR_W, 4)
-    draw_point(img, p_tl, COLOR_W, 4)
+    lw = max(2, int(2 * scale))
 
-    # --- 理想比率の補助線 (同じ幅で3本 縦の参考点) ---
-    for name, target in RATIOS.items():
-        ideal_h = r.face_width_px * target
-        # 顔中央を基準にして縦線を引く
-        cx = (p_tr[0] + p_tl[0]) / 2
-        cy = (p_top_ext[1] + p_chin[1]) / 2
-        y0 = cy - ideal_h / 2
-        y1 = cy + ideal_h / 2
-        draw_line(img, (cx + 20, y0), (cx + 20, y1), COLOR_G, 1)
-        put_label(
-            img, f"{name}:{target}", (int(cx + 25), int(y0 + 10)),
-            color=COLOR_G, scale=0.38,
-        )
+    # 縦軸 (補正前 → 補正後は破線風で)
+    draw_line_outlined(img, p_top, p_chin, C_H, thickness=lw)
+    draw_line_outlined(img, p_top_ext, p_top, C_E, thickness=lw)
 
-    # --- テキストパネル ---
-    panel_w = int(w * 0.50)
-    panel_h = int(h * 0.42)
-    panel = np.zeros((panel_h, panel_w, 3), dtype=np.uint8)
-    panel[:] = (32, 32, 32)
+    # 横軸
+    draw_line_outlined(img, p_tr, p_tl, C_W, thickness=lw)
 
-    put_label(
-        panel, "2.2.1 FACE RATIO", (10, 22),
-        color=(0, 255, 255), scale=0.55, thickness=2,
+    for pt, col in [(p_top, C_H), (p_top_ext, C_E), (p_chin, C_H),
+                    (p_tr, C_W), (p_tl, C_W)]:
+        draw_point_outlined(img, pt, col, r=max(3, int(4 * scale)))
+
+    # ---- 寸法ラベル ----
+    label_bg = (20, 20, 25)
+    label_size = max(16, int(18 * scale))
+
+    draw_pil_text(
+        img, f"縦 {r.face_height_px:.0f}",
+        (p_chin[0] + 14, p_chin[1] - 12),
+        color=C_H, size=label_size, bg=label_bg, bg_alpha=0.78, bg_pad=5,
+    )
+    draw_pil_text(
+        img, f"横 {r.face_width_px:.0f}",
+        (max(p_tr[0], p_tl[0]) + 12, (p_tr[1] + p_tl[1]) / 2 - 12),
+        color=C_W, size=label_size, bg=label_bg, bg_alpha=0.78, bg_pad=5,
+    )
+    # aspect の値
+    draw_pil_text(
+        img, f"aspect {r.aspect:.2f}",
+        (p_chin[0] + 14, p_chin[1] + 16),
+        color=(230, 230, 235), size=max(14, int(15 * scale)),
+        bg=label_bg, bg_alpha=0.78, bg_pad=5,
     )
 
-    lines = [
-        f"height(raw)  : {r.face_height_px_raw:.1f}px",
-        f"height(ext)  : {r.face_height_px:.1f}px  (x{FOREHEAD_EXTEND})",
-        f"width        : {r.face_width_px:.1f}px",
-        f"aspect(raw)  : {r.aspect_raw:.3f}",
-        f"aspect(ext)  : {r.aspect:.3f}",
-        f"closest ideal: {r.closest_ratio} ({RATIOS[r.closest_ratio]})",
-        f"  -> {r.impression}",
+    # ---- 左上ピル: closest ratio ----
+    label_color = RATIO_COLOR.get(r.closest_ratio, (255, 255, 255))
+    pill_text = RATIO_JP.get(r.closest_ratio, r.closest_ratio).upper()
+    pill_size = int(24 * max(1.0, scale * 0.9))
+    draw_pil_pill(
+        img, pill_text, (18, 18),
+        text_color=(20, 20, 30), pill_color=label_color, size=pill_size,
+        pad_x=18, pad_y=10, radius=22,
+    )
+
+    # ---- 右上凡例 ----
+    legend_items = [
+        ("raw top", C_H),
+        ("hairline +25%", C_E),
+        ("横幅", C_W),
     ]
-    for i, line in enumerate(lines):
-        put_label(panel, line, (10, 44 + i * 16), scale=0.4)
+    legend_font = max(14, int(15 * scale))
+    sw_w = int(18 * scale)
+    sw_h = int(14 * scale)
+    row_h = int(26 * scale)
+    lx = w - int(170 * scale)
+    ly = int(20 * scale)
+    cv2.rectangle(
+        img, (lx - 8, ly - 6),
+        (w - 14, ly + row_h * len(legend_items) + 4),
+        (0, 0, 0), -1,
+    )
+    for i, (name, col) in enumerate(legend_items):
+        y_item = ly + i * row_h
+        cv2.rectangle(
+            img, (lx, y_item + 4), (lx + sw_w, y_item + 4 + sw_h), col, -1,
+        )
+        draw_pil_text(
+            img, name, (lx + sw_w + 8, y_item),
+            color=(235, 235, 240), size=legend_font,
+        )
 
-    # 損失バー
-    y_bar = 44 + len(lines) * 16 + 8
-    put_label(panel, "deviation from ideal:", (10, y_bar), scale=0.4, color=(255, 255, 255))
-    y_bar += 14
-    for name, loss in r.losses.items():
-        best = name == r.closest_ratio
-        col = (0, 255, 255) if best else (180, 180, 180)
-        put_label(panel, f"{name:9s} {loss*100:5.2f}%", (12, y_bar + 12), scale=0.38, color=col)
-        bw = int(200 * min(1.0, loss * 10))  # 10% で バー full
-        cv2.rectangle(panel, (140, y_bar + 2), (140 + bw, y_bar + 10), col, -1)
-        y_bar += 16
-
-    # mm/cm
-    if r.face_height_cm > 0:
-        y_bar += 6
-        mm_lines = [
-            f"mm/pixel     : {r.mm_per_pixel:.3f}mm (iris={IRIS_DIAMETER_MM}mm)",
-            f"height       : {r.face_height_cm:.1f}cm  (AIST avg {AIST_MALE_HEIGHT_CM}cm)",
-            f"width        : {r.face_width_cm:.1f}cm  (AIST avg {AIST_MALE_WIDTH_CM}cm)",
-            f"kogao score  : {r.kogao_score:.1f}  [{r.kogao_label}]",
-        ]
-        for i, line in enumerate(mm_lines):
-            put_label(panel, line, (10, y_bar + 12 + i * 16), scale=0.4,
-                      color=(200, 255, 200))
-
-    # 埋め込み
-    y0 = h - panel_h - 10
-    x0 = 10
-    if y0 >= 0 and x0 + panel_w <= w:
-        img[y0:y0 + panel_h, x0:x0 + panel_w] = panel
     return img
+
+
+def build_panel(r: FaceRatioResult, width: int, height: int) -> np.ndarray:
+    label_color = RATIO_COLOR.get(r.closest_ratio, (255, 255, 255))
+
+    # 理想比の正規化スコア (1 - 相対ずれ)
+    ideal_scores = {k: max(0.0, 1.0 - loss * 20) for k, loss in r.losses.items()}
+
+    spec = [
+        ("title", "2.2.1  縦横バランス", (230, 230, 230)),
+        ("subtitle", "Face Aspect vs Ideal Ratios"),
+        ("divider",),
+        ("spacer", 4),
+        ("section", "判定結果"),
+        ("big", r.closest_ratio.upper(), label_color),
+        ("text", RATIO_JP.get(r.closest_ratio, "") + "  →  " + r.impression,
+            (210, 210, 215)),
+        ("spacer", 6),
+        ("section", "計測値"),
+        ("kv", "縦 (補正後)",  f"{r.face_height_px:.0f} px"),
+        ("kv", "横 (こめかみ)", f"{r.face_width_px:.0f} px"),
+        ("kv", "aspect (raw)", f"{r.aspect_raw:.3f}"),
+        ("kv", "aspect (ext)", f"{r.aspect:.3f}", label_color),
+    ]
+
+    if r.face_height_cm > 0:
+        kogao_color = (150, 255, 180) if r.kogao_score >= 85 else (230, 230, 235)
+        spec += [
+            ("spacer", 6),
+            ("section", "実寸換算 (虹彩 11.7mm 基準)"),
+            ("kv", "縦幅",        f"{r.face_height_cm:.1f} cm"),
+            ("kv", "横幅",        f"{r.face_width_cm:.1f} cm"),
+            ("kv", "小顔スコア",  f"{r.kogao_score:.0f} / 100", kogao_color),
+            ("kv", "",            f"[{r.kogao_label}]", kogao_color),
+        ]
+
+    spec += [
+        ("spacer", 8),
+        ("section", "理想比マッチ度"),
+    ]
+
+    # レーダー: 3 つの理想比
+    radar_keys = list(RATIOS.keys())
+    radar_labels = [RATIO_JP[k] for k in radar_keys]
+    radar_vals = [ideal_scores[k] for k in radar_keys]
+    best_idx = radar_keys.index(r.closest_ratio)
+    # min-max 正規化
+    rv_min = min(radar_vals)
+    rv_max = max(radar_vals)
+    rv_range = max(rv_max - rv_min, 1e-6)
+    radar_norm = [0.3 + 0.7 * (v - rv_min) / rv_range for v in radar_vals]
+    spec.append(("radar", radar_labels, radar_norm, best_idx, label_color))
+
+    return render_report_panel(spec, width, height)
+
+
+def build_report(image: np.ndarray, fm: FaceMesh, r: FaceRatioResult) -> np.ndarray:
+    scale = 1.5
+    src_big = cv2.resize(
+        image, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC,
+    )
+    ann_big = annotate_face(image, fm, r, scale=scale)
+    panel = build_panel(r, 620, src_big.shape[0])
+    return compose_report(src_big, ann_big, panel)
+
+
+# 後方互換
+def visualize(image: np.ndarray, fm: FaceMesh, r: FaceRatioResult) -> np.ndarray:
+    return annotate_face(image, fm, r, scale=1.0)
 
 
 # ==============================================================
@@ -301,12 +394,11 @@ def run_one(image_path: Path, output_path: Path | None = None,
     if as_json:
         print(json.dumps(r.to_dict(), indent=2, ensure_ascii=False))
 
-    vis = visualize(image, fm, r)
     out_path = output_path or image_path.parent / f"face_ratio_{image_path.stem}.png"
     if imgonly:
-        cv2.imwrite(str(out_path), vis)
+        cv2.imwrite(str(out_path), annotate_face(image, fm, r))
     else:
-        cv2.imwrite(str(out_path), make_side_by_side(image, vis))
+        cv2.imwrite(str(out_path), build_report(image, fm, r))
     print(f"出力: {out_path}")
     return r
 

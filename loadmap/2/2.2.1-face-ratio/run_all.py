@@ -9,7 +9,7 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 from shared.facemesh import FaceMesh
 from shared.face_metrics import make_side_by_side
-from main import RATIOS, analyze, visualize
+from main import RATIOS, analyze, build_report
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 IMGS_DIR = PROJECT_ROOT / "imgs"
@@ -45,9 +45,9 @@ def main():
         print(f"  aspect={r.aspect:.3f}  closest={r.closest_ratio} ({RATIOS[r.closest_ratio]})")
         print(f"  size: {r.face_height_cm:.1f}cm x {r.face_width_cm:.1f}cm  kogao={r.kogao_score:.1f}")
 
-        vis = visualize(image, fm, r)
+        report = build_report(image, fm, r)
         out_path = OUTPUT_DIR / f"result_{img_path.stem}.png"
-        cv2.imwrite(str(out_path), make_side_by_side(image, vis))
+        cv2.imwrite(str(out_path), report)
         print(f"  出力: {out_path.name}")
         results.append((img_path.stem, r))
 
