@@ -31,7 +31,39 @@
 eyelinerはメッシュではなくポリライン方式（ランドマーク座標＋太さ）で定義。
 外側オフセットで眼球への色漏れを防止。上下×目頭/中央/目尻の6パーツに分割可能。
 
-## 1.5 眉
+## 1.5 眉 ✅
+眉消し（cv2.inpaint TELEA）→ 新しい眉を描画。
+眉の形状はトレーサーツールで定義し、JSONで管理する。
+
+### 手順
+1. **形状定義**: `eyebrow_tracer.py` でリファレンス画像から眉の輪郭をトレース → `eyebrow_shapes.json` に保存
+2. **適用**: `main.py` がJSONの形状データを読み込み、顔ランドマークに合わせてマッピング
+
+### 眉タイプ（5種類、medicalbrows.jp準拠）
+| タイプ | 説明 |
+|--------|------|
+| natural | ナチュラル眉（緩やかカーブ・逆三角向け） |
+| straight | ストレート眉（直線的・卵型向け） |
+| arch | アーチ眉（丸みカーブ・丸顔向け） |
+| parallel | 平行眉（水平・太め・面長向け） |
+| corner | コーナー眉（角度あり・ベース型向け） |
+
+### 使い方
+```bash
+cd loadmap/1-virtual-makeup/1-5-eyebrow
+
+# 1. 眉形状のトレース（GUIツール）
+python eyebrow_tracer.py [画像パス] [-o 保存先JSON]
+
+# 2. 単一タイプ適用
+python main.py <入力画像> -t natural
+
+# 3. 全タイプ一括生成
+python main.py <入力画像> --all-types
+
+# 4. オプション
+python main.py <入力画像> -t arch --color 60 30 20 --intensity 0.8 --zoom -o output.png
+```
 
 
 # 2. 顔判定
