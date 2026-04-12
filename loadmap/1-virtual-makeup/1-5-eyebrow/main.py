@@ -134,7 +134,7 @@ def erase_eyebrows(
 EYEBROW_TYPES = {
     "straight": {
         "peak_position": 0.55,
-        "peak_height_ratio": 0.08,
+        "peak_height_ratio": 0.25,
         "tail_height_ratio": 0.0,
         "thickness_ratio": 0.95,
         "length_ratio": 1.0,
@@ -142,15 +142,15 @@ EYEBROW_TYPES = {
     },
     "arch": {
         "peak_position": 0.62,
-        "peak_height_ratio": 0.28,
-        "tail_height_ratio": 0.05,
+        "peak_height_ratio": 0.85,
+        "tail_height_ratio": 0.2,
         "thickness_ratio": 0.88,
         "length_ratio": 1.0,
         "desc": "アーチ眉（緩やかカーブ・丸顔向け）",
     },
     "parallel": {
         "peak_position": 0.5,
-        "peak_height_ratio": 0.03,
+        "peak_height_ratio": 0.05,
         "tail_height_ratio": 0.0,
         "thickness_ratio": 1.15,
         "length_ratio": 1.05,
@@ -158,16 +158,16 @@ EYEBROW_TYPES = {
     },
     "corner": {
         "peak_position": 0.6,
-        "peak_height_ratio": 0.4,
-        "tail_height_ratio": 0.12,
-        "thickness_ratio": 0.88,
+        "peak_height_ratio": 1.2,
+        "tail_height_ratio": 0.4,
+        "thickness_ratio": 0.85,
         "length_ratio": 0.95,
         "desc": "コーナー眉（上がり眉・ベース型向け）",
     },
     "natural": {
         "peak_position": 0.55,
-        "peak_height_ratio": 0.12,
-        "tail_height_ratio": 0.08,
+        "peak_height_ratio": 0.4,
+        "tail_height_ratio": 0.25,
         "thickness_ratio": 0.95,
         "length_ratio": 1.0,
         "desc": "ナチュラル眉（自然な下がり・逆三角向け）",
@@ -176,8 +176,8 @@ EYEBROW_TYPES = {
 
 # デフォルト設定
 DEFAULT_EYEBROW_TYPE = "straight"
-DEFAULT_EYEBROW_COLOR_RGB = (110, 85, 65)  # ナチュラルブラウン
-DEFAULT_EYEBROW_INTENSITY = 0.55
+DEFAULT_EYEBROW_COLOR_RGB = (85, 60, 45)   # 濃いめブラウン（眉山を見やすく）
+DEFAULT_EYEBROW_INTENSITY = 0.7            # 濃度を上げてハッキリ
 
 
 def compute_brow_anchors(fm: FaceMesh, side: str = "right") -> dict:
@@ -404,10 +404,9 @@ def generate_brow_polygon(anchors: dict, brow_type: str) -> np.ndarray:
     peak_y = head[1] - eye_h * params["peak_height_ratio"]
     peak = np.array([peak_x, peak_y])
 
-    # 虹彩ベースの眉山位置を使用（タイプ定義の peak_position をオフセットとして適用）
-    iris_peak_t = anchors.get("iris_peak_t", 0.62)
-    # タイプ定義のpeak_positionで微調整（iris基準 ± 差分）
-    peak_t = iris_peak_t + (peak_t - 0.62) * 0.5
+    # 眉山位置: タイプ定義の peak_position をそのまま使う
+    # (iris_peak_t は参考値としてのみ保持)
+    peak_t = params["peak_position"]
 
     # Catmull-Romで滑らかなセンターライン
     n = 120
