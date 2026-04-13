@@ -6,3 +6,5 @@ tmp/
 .DS_Store
 loadmap/**/result_*.png
 loadmap/**/highlight_*.png
+loadmap/**/_summary.png
+loadmap/**/face_landmarker.task
