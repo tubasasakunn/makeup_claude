@@ -171,13 +171,13 @@ def _segment_xs(fm: FaceMesh):
 
 def annotate_face(image: np.ndarray, fm: FaceMesh, r: HorizontalResult,
                   scale: float = 1.0) -> np.ndarray:
+    """5 セグメントの色付きバンドのみ重ねる (ラベルは目間/目幅 1 つだけ)"""
     if scale != 1.0:
         img = cv2.resize(
             image, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC,
         )
     else:
         img = image.copy()
-    h, w = img.shape[:2]
 
     y_r = (fm.landmarks_px[LM.EYE_TOP_R][1] + fm.landmarks_px[LM.EYE_BOT_R][1]) / 2
     y_l = (fm.landmarks_px[LM.EYE_TOP_L][1] + fm.landmarks_px[LM.EYE_BOT_L][1]) / 2
@@ -204,23 +204,16 @@ def annotate_face(image: np.ndarray, fm: FaceMesh, r: HorizontalResult,
             (255, 255, 255), thickness=lw,
         )
 
+    # ---- ラベル: 目間/目幅 1 つだけ ----
     label_bg = (20, 20, 25)
-    label_size = max(14, int(15 * scale))
-    for i in range(5):
-        cx = (int(xs[i]) + int(xs[i + 1])) // 2
-        if r.seg_norm:
-            draw_pil_text(
-                img, f"{r.seg_norm[i]:.2f}",
-                (cx - int(20 * scale), y_line + band_h + int(6 * scale)),
-                color=SEG_COLORS[i], size=label_size,
-                bg=label_bg, bg_alpha=0.78, bg_pad=4,
-            )
-            draw_pil_text(
-                img, SEG_NAMES[i],
-                (cx - int(22 * scale), y_line - band_h - int(28 * scale)),
-                color=SEG_COLORS[i], size=label_size,
-                bg=label_bg, bg_alpha=0.78, bg_pad=4,
-            )
+    label_size = max(18, int(20 * scale))
+    cx_mid = (int(xs[0]) + int(xs[5])) // 2
+    draw_pil_text(
+        img, f"目間/目幅 = {r.eye_gap_ratio:.2f}",
+        (cx_mid - int(80 * scale), y_line + band_h + int(10 * scale)),
+        color=(240, 240, 245), size=label_size,
+        bg=label_bg, bg_alpha=0.78, bg_pad=6,
+    )
 
     # 左上ピル
     pill_color = CATEGORY_COLOR.get(r.category, (255, 255, 255))
@@ -232,39 +225,22 @@ def annotate_face(image: np.ndarray, fm: FaceMesh, r: HorizontalResult,
         pad_x=18, pad_y=10, radius=22,
     )
 
-    # 右上凡例
-    legend_items = [
-        ("余白", SEG_COLORS[0]),
-        ("目幅", SEG_COLORS[1]),
-        ("目間", SEG_COLORS[2]),
-    ]
-    legend_font = max(14, int(15 * scale))
-    sw_w = int(18 * scale)
-    sw_h = int(14 * scale)
-    row_h = int(26 * scale)
-    lx = w - int(140 * scale)
-    ly = int(20 * scale)
-    cv2.rectangle(
-        img, (lx - 8, ly - 6),
-        (w - 14, ly + row_h * len(legend_items) + 4),
-        (0, 0, 0), -1,
-    )
-    for i, (name, col) in enumerate(legend_items):
-        y_item = ly + i * row_h
-        cv2.rectangle(
-            img, (lx, y_item + 4), (lx + sw_w, y_item + 4 + sw_h), col, -1,
-        )
-        draw_pil_text(
-            img, name, (lx + sw_w + 8, y_item),
-            color=(235, 235, 240), size=legend_font,
-        )
-
     return img
 
 
 def build_panel(r: HorizontalResult, width: int, height: int) -> np.ndarray:
     pill_color = CATEGORY_COLOR.get(r.category, (255, 255, 255))
-    seg = r.seg_norm if r.seg_norm else [0.0] * 5
+    IDEAL_COL = (200, 200, 205)
+
+    # 比較: あなた vs 理想範囲 (1.275 = (1.0+1.55)/2)
+    compare_items = [
+        ("あなた", r.eye_gap_ratio, f"{r.eye_gap_ratio:.2f}", pill_color),
+        ("理想範囲", 1.275, "1.0 - 1.55", IDEAL_COL),
+    ]
+
+    # 理想中央(1.275) からの差 %
+    ideal_mid = 1.275
+    diff_pct = (r.eye_gap_ratio - ideal_mid) / ideal_mid * 100
 
     spec = [
         ("title", "2.2.3  水平五分割", (230, 230, 230)),
@@ -274,22 +250,12 @@ def build_panel(r: HorizontalResult, width: int, height: int) -> np.ndarray:
         ("section", "判定結果"),
         ("big", r.category.split(" ")[0].upper(), pill_color),
         ("text", r.category, (210, 210, 215)),
-        ("spacer", 6),
-        ("section", "5 セグメント (目幅=1)"),
-        ("kv", "余白R",  f"{seg[0]:.2f}", SEG_COLORS[0]),
-        ("kv", "目R",    f"{seg[1]:.2f}", SEG_COLORS[1]),
-        ("kv", "目間",   f"{seg[2]:.2f}", SEG_COLORS[2]),
-        ("kv", "目L",    f"{seg[3]:.2f}", SEG_COLORS[3]),
-        ("kv", "余白L",  f"{seg[4]:.2f}", SEG_COLORS[4]),
-        ("spacer", 6),
-        ("section", "目間 / 目幅"),
-        ("kv", "eye_gap_ratio", f"{r.eye_gap_ratio:.3f}", pill_color),
-        ("text", "ideal 1.00 - 1.55", (180, 180, 185)),
-        ("spacer", 6),
-        ("section", "乖離度"),
-        ("kv", "1:1:1:1:1 loss", f"{r.ideal_loss_1:.3f}"),
-        ("kv", "JP 1:1.15:1 loss", f"{r.jp_loss:.3f}"),
-        ("kv", "balance (L-R)", f"{r.left_right_balance:+.3f}"),
+        ("spacer", 8),
+        ("section", "目間 / 目幅 (理想 1.0-1.55)"),
+        ("ratio_compare", compare_items, "あなた"),
+        ("spacer", 4),
+        ("section", "理想中央 (1.275) からの差"),
+        ("diff_bar", "", diff_pct, 30.0, pill_color),
     ]
 
     return render_report_panel(spec, width, height)

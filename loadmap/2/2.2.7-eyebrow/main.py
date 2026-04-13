@@ -197,67 +197,47 @@ CATEGORY_COLOR = {
 
 def annotate_face(image: np.ndarray, fm: FaceMesh, r: EyebrowResult,
                   scale: float = 1.0) -> np.ndarray:
+    """眉本体の線 (頭→山→尻) のみ + 眉山比ラベル 1 つ"""
     if scale != 1.0:
         img = cv2.resize(
             image, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC,
         )
     else:
         img = image.copy()
-    h, w = img.shape[:2]
 
     def S(p):
         return (float(p[0]) * scale, float(p[1]) * scale)
 
     lw = max(2, int(2 * scale))
-    lw_thin = max(1, int(1 * scale))
     pt_r = max(3, int(4 * scale))
 
-    for head_id, peak_id, tail_id, eye_in_id, eye_out_id, iris_out_id, nose_id in [
-        (LM.BROW_HEAD_R, LM.BROW_PEAK_R, LM.BROW_TAIL_R,
-         LM.EYE_INNER_R, LM.EYE_OUTER_R, LM.IRIS_R[3], LM.NOSE_WING_R),
-        (LM.BROW_HEAD_L, LM.BROW_PEAK_L, LM.BROW_TAIL_L,
-         LM.EYE_INNER_L, LM.EYE_OUTER_L, LM.IRIS_L[3], LM.NOSE_WING_L),
+    for head_id, peak_id, tail_id in [
+        (LM.BROW_HEAD_R, LM.BROW_PEAK_R, LM.BROW_TAIL_R),
+        (LM.BROW_HEAD_L, LM.BROW_PEAK_L, LM.BROW_TAIL_L),
     ]:
-        head_raw = fm.landmarks_px[head_id]
-        peak_raw = fm.landmarks_px[peak_id]
-        tail_raw = fm.landmarks_px[tail_id]
-        eye_in_raw = fm.landmarks_px[eye_in_id]
-        eye_out_raw = fm.landmarks_px[eye_out_id]
-        iris_out_raw = fm.landmarks_px[iris_out_id]
-        nose_raw = fm.landmarks_px[nose_id]
+        head = S(fm.landmarks_px[head_id])
+        peak = S(fm.landmarks_px[peak_id])
+        tail = S(fm.landmarks_px[tail_id])
 
-        head = S(head_raw)
-        peak = S(peak_raw)
-        tail = S(tail_raw)
-        eye_in = S(eye_in_raw)
-        nose = S(nose_raw)
-
-        # 眉本体
         draw_line_outlined(img, head, peak, C_BROW, thickness=lw)
         draw_line_outlined(img, peak, tail, C_BROW, thickness=lw)
-
-        # 眉頭垂直線
-        draw_line_outlined(
-            img, (eye_in[0], head[1] - 30 * scale),
-            (eye_in[0], head[1] + 10 * scale),
-            C_REF_HEAD, thickness=lw_thin,
-        )
-        # 小鼻 → 目尻 延長 (眉尻基準)
-        vec = tail_raw - nose_raw
-        ext = nose_raw + vec * 1.3
-        draw_line_outlined(
-            img, nose, S(ext), C_REF_TAIL, thickness=lw_thin,
-        )
-        # 小鼻 → 虹彩外 延長 (眉山基準)
-        vec2 = iris_out_raw.astype(np.float64) - nose_raw.astype(np.float64)
-        ext2 = nose_raw + vec2 * 1.6
-        draw_line_outlined(
-            img, nose, S(ext2), C_REF_PEAK, thickness=lw_thin,
-        )
 
         draw_point_outlined(img, head, C_HEAD_PT, r=pt_r)
         draw_point_outlined(img, peak, C_PEAK_PT, r=pt_r)
         draw_point_outlined(img, tail, C_TAIL_PT, r=pt_r)
+
+    # ---- ラベル: 平均眉山比 1 つだけ ----
+    avg_peak_ratio = (r.right.peak_ratio + r.left.peak_ratio) / 2
+    label_bg = (20, 20, 25)
+    label_size = max(18, int(20 * scale))
+    # 右眉の上に表示
+    head_r = S(fm.landmarks_px[LM.BROW_HEAD_R])
+    draw_pil_text(
+        img, f"眉山比 = {avg_peak_ratio:.2f}",
+        (head_r[0] - int(80 * scale), head_r[1] - int(36 * scale)),
+        color=(240, 240, 245), size=label_size,
+        bg=label_bg, bg_alpha=0.78, bg_pad=6,
+    )
 
     # 左上ピル
     pill_color = CATEGORY_COLOR.get(r.category, (255, 255, 255))
@@ -269,40 +249,21 @@ def annotate_face(image: np.ndarray, fm: FaceMesh, r: EyebrowResult,
         pad_x=18, pad_y=10, radius=22,
     )
 
-    # 右上凡例
-    legend_items = [
-        ("眉本体", C_BROW),
-        ("眉頭垂直", C_REF_HEAD),
-        ("眉尻基準", C_REF_TAIL),
-        ("眉山基準", C_REF_PEAK),
-    ]
-    legend_font = max(14, int(15 * scale))
-    sw_w = int(18 * scale)
-    sw_h = int(14 * scale)
-    row_h = int(26 * scale)
-    lx = w - int(160 * scale)
-    ly = int(20 * scale)
-    cv2.rectangle(
-        img, (lx - 8, ly - 6),
-        (w - 14, ly + row_h * len(legend_items) + 4),
-        (0, 0, 0), -1,
-    )
-    for i, (name, col) in enumerate(legend_items):
-        y_item = ly + i * row_h
-        cv2.rectangle(
-            img, (lx, y_item + 4), (lx + sw_w, y_item + 4 + sw_h), col, -1,
-        )
-        draw_pil_text(
-            img, name, (lx + sw_w + 8, y_item),
-            color=(235, 235, 240), size=legend_font,
-        )
-
     return img
 
 
 def build_panel(r: EyebrowResult, width: int, height: int) -> np.ndarray:
     pill_color = CATEGORY_COLOR.get(r.category, (255, 255, 255))
     sym_color = (140, 255, 160) if r.symmetry_score >= 0.9 else (230, 230, 235)
+    IDEAL_COL = (200, 200, 205)
+
+    avg_peak_ratio = (r.right.peak_ratio + r.left.peak_ratio) / 2
+    compare_items = [
+        ("右眉", r.right.peak_ratio, f"{r.right.peak_ratio:.2f}", pill_color),
+        ("左眉", r.left.peak_ratio, f"{r.left.peak_ratio:.2f}", pill_color),
+        ("理想", 2.0, "2.0", IDEAL_COL),
+    ]
+    diff_pct = (avg_peak_ratio - 2.0) / 2.0 * 100
 
     spec = [
         ("title", "2.2.7  眉", (230, 230, 230)),
@@ -312,49 +273,16 @@ def build_panel(r: EyebrowResult, width: int, height: int) -> np.ndarray:
         ("section", "判定結果"),
         ("big", r.category.split(" ")[0].upper(), pill_color),
         ("text", r.category, (210, 210, 215)),
-        ("spacer", 6),
-        ("section", "右眉 R"),
-        ("kv", "peak ratio (理想 2.0)", f"{r.right.peak_ratio:.2f}"),
-        ("kv", "peak angle", f"{r.right.angle_head_to_peak_deg:+.1f} °"),
-        ("kv", "head dev", f"{r.right.head_deviation_px:.1f} px"),
-        ("kv", "peak dev", f"{r.right.peak_deviation_px:.1f} px"),
-        ("kv", "tail dev", f"{r.right.tail_deviation_px:.1f} px"),
+        ("spacer", 8),
+        ("section", "眉山比 (頭→山:山→尻, 理想 2.0)"),
+        ("ratio_compare", compare_items, "右眉"),
         ("spacer", 4),
-        ("section", "左眉 L"),
-        ("kv", "peak ratio (理想 2.0)", f"{r.left.peak_ratio:.2f}"),
-        ("kv", "peak angle", f"{r.left.angle_head_to_peak_deg:+.1f} °"),
-        ("kv", "head dev", f"{r.left.head_deviation_px:.1f} px"),
-        ("kv", "peak dev", f"{r.left.peak_deviation_px:.1f} px"),
-        ("kv", "tail dev", f"{r.left.tail_deviation_px:.1f} px"),
+        ("section", "理想からの差"),
+        ("diff_bar", "", diff_pct, 50.0, pill_color),
         ("spacer", 6),
         ("section", "対称性"),
         ("kv", "symmetry", f"{r.symmetry_score*100:.1f} %", sym_color),
-        ("spacer", 6),
-        ("section", "誤差レーダー"),
     ]
-
-    # レーダー: 5 軸 (head_dev, peak_dev, tail_dev, peak_ratio_err, symmetry)
-    head_dev = (r.right.head_deviation_px + r.left.head_deviation_px) / 2
-    peak_dev = (r.right.peak_deviation_px + r.left.peak_deviation_px) / 2
-    tail_dev = (r.right.tail_deviation_px + r.left.tail_deviation_px) / 2
-    peak_ratio_err = (
-        abs(r.right.peak_ratio - 2.0) + abs(r.left.peak_ratio - 2.0)
-    ) / 2
-
-    # 0-1 に正規化（小さいほど良い → 反転して値を取る）
-    def _norm_dev(v: float, scale: float) -> float:
-        # v=0 → 1.0、v>=scale → 0.0
-        return max(0.0, min(1.0, 1.0 - v / max(scale, 1e-3)))
-
-    radar_labels = ["head", "peak", "tail", "ratio", "sym"]
-    radar_vals = [
-        _norm_dev(head_dev, 30),
-        _norm_dev(peak_dev, 30),
-        _norm_dev(tail_dev, 30),
-        _norm_dev(peak_ratio_err, 2.0),
-        max(0.0, min(1.0, r.symmetry_score)),
-    ]
-    spec.append(("radar", radar_labels, radar_vals, None, pill_color))
 
     return render_report_panel(spec, width, height)
 

@@ -171,13 +171,13 @@ CATEGORY_COLOR = {
 
 def annotate_face(image: np.ndarray, fm: FaceMesh, r: EyeResult,
                   scale: float = 1.0) -> np.ndarray:
+    """目の幅・高さ線と虹彩円のみ + 縦/横ラベル 1 つ"""
     if scale != 1.0:
         img = cv2.resize(
             image, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC,
         )
     else:
         img = image.copy()
-    h, w = img.shape[:2]
 
     def S(p):
         return (float(p[0]) * scale, float(p[1]) * scale)
@@ -210,22 +210,18 @@ def annotate_face(image: np.ndarray, fm: FaceMesh, r: EyeResult,
             img, (int(cx), int(cy)), rad, C_IRIS, 1, cv2.LINE_AA,
         )
 
-    # ラベル: 右目幅
+    # ---- ラベル: 縦/横 1 つだけ (両目の中央下) ----
     label_bg = (20, 20, 25)
-    label_size = max(14, int(15 * scale))
+    label_size = max(18, int(20 * scale))
     po_r = S(fm.landmarks_px[LM.EYE_OUTER_R])
-    pi_r = S(fm.landmarks_px[LM.EYE_INNER_R])
+    pi_l = S(fm.landmarks_px[LM.EYE_OUTER_L])
+    cx_mid = (po_r[0] + pi_l[0]) / 2
+    cy_mid = (po_r[1] + pi_l[1]) / 2
     draw_pil_text(
-        img, f"R w {r.right.width_px:.0f}",
-        ((po_r[0] + pi_r[0]) / 2 - 22, max(po_r[1], pi_r[1]) + 8),
-        color=C_W, size=label_size, bg=label_bg, bg_alpha=0.78, bg_pad=4,
-    )
-    po_l = S(fm.landmarks_px[LM.EYE_OUTER_L])
-    pi_l = S(fm.landmarks_px[LM.EYE_INNER_L])
-    draw_pil_text(
-        img, f"L w {r.left.width_px:.0f}",
-        ((po_l[0] + pi_l[0]) / 2 - 22, max(po_l[1], pi_l[1]) + 8),
-        color=C_W, size=label_size, bg=label_bg, bg_alpha=0.78, bg_pad=4,
+        img, f"縦/横 = {r.mean_width_ratio:.3f}",
+        (cx_mid - int(70 * scale), cy_mid + int(20 * scale)),
+        color=(240, 240, 245), size=label_size,
+        bg=label_bg, bg_alpha=0.78, bg_pad=6,
     )
 
     # 左上ピル
@@ -238,66 +234,36 @@ def annotate_face(image: np.ndarray, fm: FaceMesh, r: EyeResult,
         pad_x=18, pad_y=10, radius=22,
     )
 
-    # 右上凡例
-    legend_items = [
-        ("横幅", C_W),
-        ("縦幅", C_H),
-        ("虹彩", C_IRIS),
-    ]
-    legend_font = max(14, int(15 * scale))
-    sw_w = int(18 * scale)
-    sw_h = int(14 * scale)
-    row_h = int(26 * scale)
-    lx = w - int(140 * scale)
-    ly = int(20 * scale)
-    cv2.rectangle(
-        img, (lx - 8, ly - 6),
-        (w - 14, ly + row_h * len(legend_items) + 4),
-        (0, 0, 0), -1,
-    )
-    for i, (name, col) in enumerate(legend_items):
-        y_item = ly + i * row_h
-        cv2.rectangle(
-            img, (lx, y_item + 4), (lx + sw_w, y_item + 4 + sw_h), col, -1,
-        )
-        draw_pil_text(
-            img, name, (lx + sw_w + 8, y_item),
-            color=(235, 235, 240), size=legend_font,
-        )
-
     return img
 
 
 def build_panel(r: EyeResult, width: int, height: int) -> np.ndarray:
     pill_color = CATEGORY_COLOR.get(r.category, (255, 255, 255))
     sym_color = (140, 255, 160) if r.symmetry_score >= 0.9 else (230, 230, 235)
+    IDEAL_COL = (200, 200, 205)
+
+    compare_items = [
+        ("あなた", r.mean_width_ratio, f"{r.mean_width_ratio:.2f}", pill_color),
+        ("理想",   0.333, "0.33", IDEAL_COL),
+    ]
+    diff_pct = (r.mean_width_ratio - 0.333) / 0.333 * 100
 
     spec = [
         ("title", "2.2.4  目", (230, 230, 230)),
-        ("subtitle", "Eye Ratio / Iris / Symmetry"),
+        ("subtitle", "Eye Ratio / Symmetry"),
         ("divider",),
         ("spacer", 4),
         ("section", "判定結果"),
         ("big", r.category.upper(), pill_color),
-        ("text", f"mean h/w = {r.mean_width_ratio:.3f}  (ideal 0.333)",
-            (210, 210, 215)),
-        ("spacer", 6),
-        ("section", "右目 R"),
-        ("kv", "width / height", f"{r.right.width_px:.0f} / {r.right.height_px:.0f}"),
-        ("kv", "h/w ratio", f"{r.right.ratio:.3f}"),
-        ("kv", "iris 径", f"{r.right.iris_diameter_px:.1f} px"),
-        ("kv", "1:2:1 loss", f"{r.right.iris_loss:.3f}"),
+        ("spacer", 8),
+        ("section", "縦/横 比率 (理想 0.333 = 1:3)"),
+        ("ratio_compare", compare_items, "あなた"),
         ("spacer", 4),
-        ("section", "左目 L"),
-        ("kv", "width / height", f"{r.left.width_px:.0f} / {r.left.height_px:.0f}"),
-        ("kv", "h/w ratio", f"{r.left.ratio:.3f}"),
-        ("kv", "iris 径", f"{r.left.iris_diameter_px:.1f} px"),
-        ("kv", "1:2:1 loss", f"{r.left.iris_loss:.3f}"),
+        ("section", "理想からの差"),
+        ("diff_bar", "", diff_pct, 50.0, pill_color),
         ("spacer", 6),
-        ("section", "対称性 / 比率"),
+        ("section", "対称性"),
         ("kv", "symmetry", f"{r.symmetry_score*100:.1f} %", sym_color),
-        ("kv", "eye / face", f"{r.eye_to_face_ratio*100:.1f} %"),
-        ("kv", "ideal loss", f"{r.ideal_ratio_loss:.3f}"),
     ]
 
     return render_report_panel(spec, width, height)

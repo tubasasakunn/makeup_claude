@@ -249,10 +249,10 @@ TYPE_COLORS = {
 
 def annotate_face(image: np.ndarray, fm: FaceMesh, result: SkeletalResult,
                   scale: float = 1.0) -> np.ndarray:
-    """顔画像にランドマーク線・計測線を重ねる
+    """顔画像に「本人の輪郭線」だけを重ねる (シンプル版)
 
-    scale > 1 を指定すると、まず画像を scale 倍にして、座標も同倍して描画する
-    (cv2.resize の後でテキストを描くのでテキストがボケない)。
+    縦軸 + こめかみ横軸 + エラ幅 + 頬骨幅 のみ。
+    凡度・寸法ラベルは描かず、判定タイプを 1 つだけラベル表示する。
     """
     if scale != 1.0:
         img = cv2.resize(
@@ -261,12 +261,10 @@ def annotate_face(image: np.ndarray, fm: FaceMesh, result: SkeletalResult,
     else:
         img = image.copy()
     m = result.metrics
-    h, w = img.shape[:2]
 
     def S(p):
         return (float(p[0]) * scale, float(p[1]) * scale)
 
-    # ---- 計測線 ----
     p_top = S(m.raw["forehead_top"])
     p_chin = S(m.raw["chin"])
     tr = S(m.raw["temple_r"])
@@ -275,106 +273,44 @@ def annotate_face(image: np.ndarray, fm: FaceMesh, result: SkeletalResult,
     cl = S(m.raw["cheekbone_l"])
     gr = S(m.raw["gonion_r"])
     gl = S(m.raw["gonion_l"])
-    fr = S(m.raw["forehead_r"])
-    fl = S(m.raw["forehead_l"])
 
     lw = max(2, int(2 * scale))
     lw_strong = max(3, int(3 * scale))
 
+    # 縦軸 + こめかみ横軸 + 頬骨横軸 + エラ横軸
     draw_line_outlined(img, p_top, p_chin, C_H, thickness=lw)
     draw_line_outlined(img, tr, tl, C_W, thickness=lw)
     draw_line_outlined(img, cr, cl, C_CHEEK, thickness=lw)
     draw_line_outlined(img, gr, gl, C_JAW, thickness=lw_strong)
-    draw_line_outlined(img, fr, fl, C_FOREHEAD, thickness=lw)
-    draw_line_outlined(img, gr, p_chin, C_CHIN, thickness=lw)
-    draw_line_outlined(img, gl, p_chin, C_CHIN, thickness=lw)
 
-    # ---- ポイント ----
     pt_r = max(3, int(4 * scale))
     for p, col in [
         (p_top, C_H), (p_chin, C_H),
         (tr, C_W), (tl, C_W),
         (gr, C_JAW), (gl, C_JAW),
         (cr, C_CHEEK), (cl, C_CHEEK),
-        (fr, C_FOREHEAD), (fl, C_FOREHEAD),
     ]:
         draw_point_outlined(img, p, col, r=pt_r)
 
-    # ---- 寸法ラベル (半透明背景付き, PIL で鮮明) ----
+    # ---- ラベル: 判定タイプ 1 つだけ ----
+    label_color = TYPE_COLORS.get(result.type, (255, 255, 255))
     label_bg = (20, 20, 25)
-    label_size = max(16, int(18 * scale))
-    small_label_size = max(14, int(16 * scale))
-
-    tx_right = max(tr[0], tl[0])
+    label_size = max(20, int(22 * scale))
+    type_jp = TYPE_JP.get(result.type, result.type)
     draw_pil_text(
-        img, f"{m.face_width_temple_px:.0f}",
-        (tx_right + 12, (tr[1] + tl[1]) / 2 - 12),
-        color=C_W, size=label_size, bg=label_bg, bg_alpha=0.78, bg_pad=5,
-    )
-    gx_right = max(gr[0], gl[0])
-    draw_pil_text(
-        img, f"{m.face_width_jaw_px:.0f}",
-        (gx_right + 12, (gr[1] + gl[1]) / 2 - 12),
-        color=C_JAW, size=label_size, bg=label_bg, bg_alpha=0.78, bg_pad=5,
-    )
-    # 縦: 顎の右下
-    draw_pil_text(
-        img, f"{m.face_height_px:.0f}",
+        img, type_jp,
         (p_chin[0] + 14, p_chin[1] - 12),
-        color=C_H, size=label_size, bg=label_bg, bg_alpha=0.78, bg_pad=5,
-    )
-    # 頬骨幅
-    draw_pil_text(
-        img, f"{m.face_width_cheekbone_px:.0f}",
-        ((cr[0] + cl[0]) / 2 - 18, (cr[1] + cl[1]) / 2 - 26),
-        color=C_CHEEK, size=small_label_size,
-        bg=label_bg, bg_alpha=0.78, bg_pad=4,
+        color=(240, 240, 245), size=label_size,
+        bg=label_bg, bg_alpha=0.78, bg_pad=6,
     )
 
     # ---- 左上に判定ピルバッジ ----
-    label_color = TYPE_COLORS.get(result.type, (255, 255, 255))
     pill_size = int(26 * max(1.0, scale * 0.9))
     draw_pil_pill(
         img, result.type.upper(), (18, 18),
         text_color=(20, 20, 30), pill_color=label_color, size=pill_size,
         pad_x=18, pad_y=10, radius=22,
     )
-
-    # ---- 右上に凡例 ----
-    legend_items = [
-        ("縦 H",   C_H),
-        ("横 W",   C_W),
-        ("頬骨",   C_CHEEK),
-        ("エラ",   C_JAW),
-        ("あご角", C_CHIN),
-    ]
-    legend_font = max(14, int(15 * scale))
-    swatch_w = int(18 * scale)
-    swatch_h = int(14 * scale)
-    row_h = int(26 * scale)
-    lx = w - int(140 * scale)
-    ly = int(20 * scale)
-    # 背景
-    cv2.rectangle(
-        img,
-        (lx - 8, ly - 6),
-        (w - 14, ly + row_h * len(legend_items) + 4),
-        (0, 0, 0),
-        -1,
-    )
-    for i, (name, col) in enumerate(legend_items):
-        y_item = ly + i * row_h
-        cv2.rectangle(
-            img,
-            (lx, y_item + 4),
-            (lx + swatch_w, y_item + 4 + swatch_h),
-            col, -1,
-        )
-        draw_pil_text(
-            img, name,
-            (lx + swatch_w + 8, y_item),
-            color=(235, 235, 240), size=legend_font,
-        )
 
     return img
 
@@ -389,11 +325,7 @@ TYPE_JP = {
 
 
 def build_panel(result: SkeletalResult, width: int, height: int) -> np.ndarray:
-    """2.1 用のレポートパネルを構築
-
-    - 上段: 判定結果 + 特徴量 KV テーブル
-    - 下段: 5 タイプスコアのレーダーチャート (差を相対表示)
-    """
+    """2.1 用のレポートパネル: 判定結果 + 5タイプスコアの横バー比較"""
     label_color = TYPE_COLORS.get(result.type, (255, 255, 255))
 
     best_score = result.scores[result.type]
@@ -403,42 +335,38 @@ def build_panel(result: SkeletalResult, width: int, height: int) -> np.ndarray:
     )[0]
     gap_pct = (best_score - second[1]) / max(best_score, 1e-6) * 100
 
+    # 5 タイプスコアを min-max 正規化 (winner=1.0)
+    keys_order = ["oval", "round", "long", "inverted_triangle", "base"]
+    vals = [result.scores[k] for k in keys_order]
+    v_min = min(vals)
+    v_max = max(vals)
+    v_range = max(v_max - v_min, 1e-6)
+    norms = {k: (v - v_min) / v_range for k, v in zip(keys_order, vals)}
+
     spec = [
         ("title", "2.1  骨格タイプ判定", (230, 230, 230)),
-        ("subtitle", "Skeletal Type (prototype distance)"),
+        ("subtitle", "Skeletal Type"),
         ("divider",),
         ("spacer", 4),
         ("section", "判定結果"),
         ("big", result.type.upper(), label_color),
         ("text", result.type_label, (210, 210, 215)),
-        ("spacer", 6),
-        ("section", "特徴量"),
-        ("kv", "縦横比 (H/W)",   f"{result.features.aspect:.3f}"),
-        ("kv", "頬 / こめかみ",  f"{result.features.cheek_to_temple:.3f}"),
-        ("kv", "エラ / 頬",      f"{result.features.jaw_ratio:.3f}"),
-        ("kv", "おでこ / 頬",    f"{result.features.forehead_ratio:.3f}"),
-        ("kv", "あご角度",       f"{result.features.chin_angle:.1f} °"),
-        ("kv", "下方絞り",       f"{result.features.taper:.3f}"),
-        ("spacer", 6),
-        ("section", "信頼度"),
-        ("kv", f"{TYPE_JP.get(result.type, result.type)} (best)",
-            f"{best_score:.3f}", label_color),
-        ("kv", f"{TYPE_JP.get(second[0], second[0])} (2nd)",
-            f"{second[1]:.3f}"),
-        ("kv", "1-2位の差", f"{gap_pct:+.1f} %", (150, 255, 180)),
         ("spacer", 8),
+        ("section", "5タイプスコア"),
     ]
+    for k in keys_order:
+        is_best = (k == result.type)
+        spec.append((
+            "bar",
+            TYPE_JP[k],
+            norms[k],
+            is_best,
+            f"{result.scores[k]:.3f}",
+        ))
 
-    # レーダー: 軸ラベルを日本語で、差を強調
-    radar_labels = ["卵型", "丸型", "面長", "逆三角", "ベース"]
-    radar_keys = ["oval", "round", "long", "inverted_triangle", "base"]
-    radar_vals = [result.scores[k] for k in radar_keys]
-    rv_min = min(radar_vals)
-    rv_max = max(radar_vals)
-    rv_range = max(rv_max - rv_min, 1e-6)
-    radar_norm = [0.25 + 0.75 * (v - rv_min) / rv_range for v in radar_vals]
-    best_idx = radar_keys.index(result.type)
-    spec.append(("radar", radar_labels, radar_norm, best_idx, label_color))
+    spec.append(("spacer", 6))
+    spec.append(("section", "1位 vs 2位 (信頼度)"))
+    spec.append(("diff_bar", "", gap_pct, 30.0, label_color))
 
     return render_report_panel(spec, width, height)
 

@@ -272,6 +272,7 @@ def _golden_color(score: float) -> tuple:
 
 def annotate_face(image: np.ndarray, fm: FaceMesh, r: SymmetryResult,
                   scale: float = 1.0) -> np.ndarray:
+    """中央縦軸 + ジョーライン のみ + スコアラベル 1 つ"""
     if scale != 1.0:
         img = cv2.resize(
             image, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC,
@@ -284,38 +285,39 @@ def annotate_face(image: np.ndarray, fm: FaceMesh, r: SymmetryResult,
         return (float(p[0]) * scale, float(p[1]) * scale)
 
     nose = S(fm.landmarks_px[LM.NOSE_TIP])
-    cr = S(fm.landmarks_px[LM.CHEEKBONE_R])
-    cl = S(fm.landmarks_px[LM.CHEEKBONE_L])
     gr = S(fm.landmarks_px[LM.GONION_R])
     gl = S(fm.landmarks_px[LM.GONION_L])
     chin = S(fm.landmarks_px[LM.CHIN_BOTTOM])
-    nose_r = S(fm.landmarks_px[LM.NOSE_WING_R])
-    iris_r_c_raw = np.mean([fm.landmarks_px[i] for i in LM.IRIS_R], axis=0)
-    iris_r_c = S(iris_r_c_raw)
 
     lw = max(2, int(2 * scale))
     lw_strong = max(3, int(3 * scale))
     pt_r = max(3, int(4 * scale))
 
-    # 顔中央縦線
+    # 顔中央縦線 (対称軸)
     draw_line_outlined(
         img, (nose[0], 0), (nose[0], h), C_VERT_AXIS, thickness=lw,
     )
-    # 頬対称
-    draw_line_outlined(img, cr, cl, C_CHEEK, thickness=lw)
     # ジョーライン
     draw_line_outlined(img, gr, chin, C_JAW, thickness=lw_strong)
     draw_line_outlined(img, gl, chin, C_JAW, thickness=lw_strong)
-    # 頬黄金比基準
-    draw_line_outlined(img, nose_r, gr, C_CHEEK_REF1, thickness=lw)
-    draw_line_outlined(img, iris_r_c, gr, C_CHEEK_REF2, thickness=lw)
 
-    for p, col in [(cr, C_CHEEK), (cl, C_CHEEK),
-                   (gr, C_JAW), (gl, C_JAW), (chin, C_JAW)]:
+    for p, col in [
+        (gr, C_JAW), (gl, C_JAW), (chin, C_JAW),
+    ]:
         draw_point_outlined(img, p, col, r=pt_r)
 
-    # 左上ピル
+    # ---- ラベル: スコア 1 つだけ ----
     pill_color = _golden_color(r.golden_score)
+    label_bg = (20, 20, 25)
+    label_size = max(20, int(22 * scale))
+    draw_pil_text(
+        img, f"スコア {r.golden_score:.0f}",
+        (chin[0] + int(14 * scale), chin[1] - 12),
+        color=(240, 240, 245), size=label_size,
+        bg=label_bg, bg_alpha=0.78, bg_pad=6,
+    )
+
+    # 左上ピル
     pill_text = f"{r.golden_label}".upper()
     pill_size = int(24 * max(1.0, scale * 0.9))
     draw_pil_pill(
@@ -324,42 +326,11 @@ def annotate_face(image: np.ndarray, fm: FaceMesh, r: SymmetryResult,
         pad_x=18, pad_y=10, radius=22,
     )
 
-    # 右上凡例
-    legend_items = [
-        ("中央線", C_VERT_AXIS),
-        ("頬対称", C_CHEEK),
-        ("ジョー", C_JAW),
-        ("小鼻→輪郭", C_CHEEK_REF1),
-        ("黒目→輪郭", C_CHEEK_REF2),
-    ]
-    legend_font = max(14, int(15 * scale))
-    sw_w = int(18 * scale)
-    sw_h = int(14 * scale)
-    row_h = int(26 * scale)
-    lx = w - int(170 * scale)
-    ly = int(20 * scale)
-    cv2.rectangle(
-        img, (lx - 8, ly - 6),
-        (w - 14, ly + row_h * len(legend_items) + 4),
-        (0, 0, 0), -1,
-    )
-    for i, (name, col) in enumerate(legend_items):
-        y_item = ly + i * row_h
-        cv2.rectangle(
-            img, (lx, y_item + 4), (lx + sw_w, y_item + 4 + sw_h), col, -1,
-        )
-        draw_pil_text(
-            img, name, (lx + sw_w + 8, y_item),
-            color=(235, 235, 240), size=legend_font,
-        )
-
     return img
 
 
 def build_panel(r: SymmetryResult, width: int, height: int) -> np.ndarray:
     pill_color = _golden_color(r.golden_score)
-    sym_color = (140, 255, 160) if r.overall_sym >= 0.9 else (230, 230, 235)
-    jaw_color = (140, 255, 160) if r.jaw_line_sharpness >= 0.7 else (230, 230, 235)
 
     sk = r.sub_results["skeletal"]
     fr = r.sub_results["face_ratio"]
@@ -370,73 +341,61 @@ def build_panel(r: SymmetryResult, width: int, height: int) -> np.ndarray:
     mr = r.sub_results["mouth"]
     br = r.sub_results["eyebrow"]
 
+    # 8 軸スコア (0-1)
+    def _safe(v: float, lo: float, hi: float) -> float:
+        return max(0.0, min(1.0, (v - lo) / (hi - lo + 1e-9)))
+
+    sk_val = max(sk.scores.values()) if sk.scores else 0.0
+    skel_score = _safe(sk_val, 0.4, 1.0)
+    fr_loss = fr.losses.get(fr.closest_ratio, 0.5)
+    face_score = max(0.0, 1.0 - fr_loss * 5.0)
+    vert_score = max(0.0, 1.0 - min(vr.traditional_loss, vr.reiwa_loss) * 4.0)
+    horiz_score = max(0.0, 1.0 - min(hr.ideal_loss_1, hr.jp_loss) * 2.5)
+    eye_score = er.symmetry_score
+    nose_score = max(
+        0.0,
+        1.0 - (nr.wing_loss + nr.length_loss) / 2,
+    )
+    mouth_score = max(
+        0.0,
+        1.0 - abs(mr.lip_ratio - 1.75) / 1.75,
+    )
+    brow_score = br.symmetry_score
+
+    axis_rows = [
+        ("2.1 骨格",        skel_score),
+        ("2.2.1 縦横比",    face_score),
+        ("2.2.2 三分割",    vert_score),
+        ("2.2.3 五分割",    horiz_score),
+        ("2.2.4 目",        eye_score),
+        ("2.2.5 鼻",        nose_score),
+        ("2.2.6 口",        mouth_score),
+        ("2.2.7 眉",        brow_score),
+    ]
+
     spec = [
         ("title", "2.2.8  総合判定", (230, 230, 230)),
         ("subtitle", "Overall Golden Symmetry"),
         ("divider",),
         ("spacer", 4),
-        ("section", "判定結果"),
+        ("section", "総合判定"),
         ("big", f"{r.golden_score:.0f}", pill_color),
         ("text", r.golden_label, (210, 210, 215)),
-        ("spacer", 6),
-        ("section", "対称性"),
-        ("kv", "eye sym", f"{r.eye_sym*100:.1f} %"),
-        ("kv", "brow sym", f"{r.brow_sym*100:.1f} %"),
-        ("kv", "contour sym", f"{r.face_contour_sym*100:.1f} %"),
-        ("kv", "OVERALL sym", f"{r.overall_sym*100:.1f} %", sym_color),
-        ("kv", "jaw sharpness", f"{r.jaw_line_sharpness*100:.1f} %", jaw_color),
-        ("spacer", 6),
-        ("section", "サブ結果"),
-        ("kv", "2.1 skeletal", sk.type),
-        ("kv", "2.2.1 face", fr.closest_ratio),
-        ("kv", "2.2.2 vert", vr.closest),
-        ("kv", "2.2.3 horiz", hr.category.split(" ")[0]),
-        ("kv", "2.2.4 eye", er.category),
-        ("kv", "2.2.5 nose", nr.overall),
-        ("kv", "2.2.6 mouth", mr.overall),
-        ("kv", "2.2.7 brow", br.category.split(" ")[0]),
-        ("spacer", 6),
-        ("section", "8 軸スコア レーダー"),
+        ("spacer", 8),
+        ("section", "8 軸スコア"),
     ]
 
-    # 8軸レーダー: 各サブセクションのキー指標を 0-1 正規化
-    def _safe(v: float, lo: float, hi: float) -> float:
-        return max(0.0, min(1.0, (v - lo) / (hi - lo + 1e-9)))
-
-    # 2.1 skeletal: 1位スコアを (0.5..1.0) で
-    sk_val = max(sk.scores.values()) if sk.scores else 0.0
-    skel_score = _safe(sk_val, 0.4, 1.0)
-    # 2.2.1 face_ratio: closest loss が小さいほど高得点
-    fr_loss = fr.losses.get(fr.closest_ratio, 0.5)
-    face_score = max(0.0, 1.0 - fr_loss * 5.0)
-    # 2.2.2 vertical
-    vert_score = max(0.0, 1.0 - min(vr.traditional_loss, vr.reiwa_loss) * 4.0)
-    # 2.2.3 horizontal
-    horiz_score = max(0.0, 1.0 - min(hr.ideal_loss_1, hr.jp_loss) * 2.5)
-    # 2.2.4 eye: symmetry
-    eye_score = er.symmetry_score
-    # 2.2.5 nose: 1 - mean of losses
-    nose_score = max(
-        0.0,
-        1.0 - (nr.wing_loss + nr.length_loss) / 2,
-    )
-    # 2.2.6 mouth: ratio similarity to ideal lip 1.75
-    mouth_score = max(
-        0.0,
-        1.0 - abs(mr.lip_ratio - 1.75) / 1.75,
-    )
-    # 2.2.7 eyebrow: symmetry
-    brow_score = br.symmetry_score
-
-    radar_labels = [
-        "skel", "face", "vert", "horiz",
-        "eye", "nose", "mouth", "brow",
-    ]
-    radar_vals = [
-        skel_score, face_score, vert_score, horiz_score,
-        eye_score, nose_score, mouth_score, brow_score,
-    ]
-    spec.append(("radar", radar_labels, radar_vals, None, pill_color))
+    # 最大値を見つけて is_best を付与
+    max_v = max(v for _, v in axis_rows)
+    for label, val in axis_rows:
+        is_best = (val >= max_v - 1e-6)
+        spec.append((
+            "bar",
+            label,
+            val,
+            is_best,
+            f"{val*100:.0f}",
+        ))
 
     return render_report_panel(spec, width, height)
 

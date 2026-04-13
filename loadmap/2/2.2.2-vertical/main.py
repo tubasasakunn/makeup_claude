@@ -160,13 +160,13 @@ CLOSEST_JP = {
 
 def annotate_face(image: np.ndarray, fm: FaceMesh, r: VerticalResult,
                   scale: float = 1.0) -> np.ndarray:
+    """3 つの色付きバンドだけを重ねる (ラベルは比率 1 つだけ)"""
     if scale != 1.0:
         img = cv2.resize(
             image, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC,
         )
     else:
         img = image.copy()
-    h, w = img.shape[:2]
 
     x_l = int(fm.landmarks_px[LM.TEMPLE_R][0] * scale)
     x_r = int(fm.landmarks_px[LM.TEMPLE_L][0] * scale)
@@ -179,13 +179,13 @@ def annotate_face(image: np.ndarray, fm: FaceMesh, r: VerticalResult,
     chin = r.chin_y * scale
 
     regions = [
-        (hairline, brow, C_UPPER, "上顔面", r.upper_norm),
-        (brow, subn, C_MID, "中顔面", r.middle_norm),
-        (subn, chin, C_LOWER, "下顔面", r.lower_norm),
+        (hairline, brow, C_UPPER),
+        (brow, subn, C_MID),
+        (subn, chin, C_LOWER),
     ]
 
     overlay = img.copy()
-    for y0, y1, col, *_ in regions:
+    for y0, y1, col in regions:
         cv2.rectangle(
             overlay, (x_l, int(y0)), (x_r, int(y1)),
             col, -1,
@@ -199,18 +199,18 @@ def annotate_face(image: np.ndarray, fm: FaceMesh, r: VerticalResult,
             img, (x_l - pad, y), (x_r + pad, y), C_LINE, thickness=lw,
         )
 
+    # ---- ラベル: 比率 1 つだけ (顔の右側) ----
     label_bg = (20, 20, 25)
-    label_size = max(16, int(18 * scale))
-    center_x = (x_l + x_r) // 2
-
-    for (y0, y1, col, name, norm) in regions:
-        cy = int((y0 + y1) / 2)
-        draw_pil_text(
-            img, f"{name} {norm:.2f}",
-            (center_x - int(50 * scale), cy - int(10 * scale)),
-            color=col, size=label_size,
-            bg=label_bg, bg_alpha=0.78, bg_pad=5,
-        )
+    label_size = max(18, int(20 * scale))
+    label_text = (
+        f"{r.upper_norm:.2f} : {r.middle_norm:.2f} : {r.lower_norm:.2f}"
+    )
+    draw_pil_text(
+        img, label_text,
+        (x_r + int(14 * scale), int((hairline + chin) / 2 - 12)),
+        color=(240, 240, 245), size=label_size,
+        bg=label_bg, bg_alpha=0.78, bg_pad=6,
+    )
 
     # 左上ピル
     pill_color = CLOSEST_COLOR.get(r.closest, (255, 255, 255))
@@ -222,40 +222,23 @@ def annotate_face(image: np.ndarray, fm: FaceMesh, r: VerticalResult,
         pad_x=18, pad_y=10, radius=22,
     )
 
-    # 右上凡例
-    legend_items = [
-        ("上顔面", C_UPPER),
-        ("中顔面", C_MID),
-        ("下顔面", C_LOWER),
-    ]
-    legend_font = max(14, int(15 * scale))
-    sw_w = int(18 * scale)
-    sw_h = int(14 * scale)
-    row_h = int(26 * scale)
-    lx = w - int(150 * scale)
-    ly = int(20 * scale)
-    cv2.rectangle(
-        img, (lx - 8, ly - 6),
-        (w - 14, ly + row_h * len(legend_items) + 4),
-        (0, 0, 0), -1,
-    )
-    for i, (name, col) in enumerate(legend_items):
-        y_item = ly + i * row_h
-        cv2.rectangle(
-            img, (lx, y_item + 4), (lx + sw_w, y_item + 4 + sw_h), col, -1,
-        )
-        draw_pil_text(
-            img, name, (lx + sw_w + 8, y_item),
-            color=(235, 235, 240), size=legend_font,
-        )
-
     return img
 
 
 def build_panel(r: VerticalResult, width: int, height: int) -> np.ndarray:
     pill_color = CLOSEST_COLOR.get(r.closest, (255, 255, 255))
-    trad_color = (140, 255, 160) if r.closest == "traditional" else (180, 180, 185)
-    reiwa_color = (140, 255, 160) if r.closest == "reiwa" else (180, 180, 185)
+    IDEAL_COL = (200, 200, 205)
+
+    # 4 段比較: 上 / 中 / 下 / 理想 (1.0)
+    compare_items = [
+        ("上顔面", r.upper_norm, f"{r.upper_norm:.2f}", C_UPPER),
+        ("中顔面", r.middle_norm, f"{r.middle_norm:.2f}", C_MID),
+        ("下顔面", r.lower_norm, f"{r.lower_norm:.2f}", C_LOWER),
+        ("理想",   1.0, "1.0", IDEAL_COL),
+    ]
+
+    closest_loss = min(r.traditional_loss, r.reiwa_loss)
+    diff_pct = closest_loss * 100  # 0=完全一致
 
     spec = [
         ("title", "2.2.2  垂直三分割", (230, 230, 230)),
@@ -265,20 +248,12 @@ def build_panel(r: VerticalResult, width: int, height: int) -> np.ndarray:
         ("section", "判定結果"),
         ("big", CLOSEST_JP.get(r.closest, r.closest).upper(), pill_color),
         ("text", r.category, (210, 210, 215)),
-        ("spacer", 6),
-        ("section", "正規化比率 (中顔面=1)"),
-        ("kv", "上顔面 upper", f"{r.upper_norm:.3f}", C_UPPER),
-        ("kv", "中顔面 middle", f"{r.middle_norm:.3f}", C_MID),
-        ("kv", "下顔面 lower", f"{r.lower_norm:.3f}", C_LOWER),
-        ("spacer", 6),
-        ("section", "乖離度 (低いほど近い)"),
-        ("kv", "伝統 1:1:1", f"{r.traditional_loss:.3f}", trad_color),
-        ("kv", "令和 1:1:0.8", f"{r.reiwa_loss:.3f}", reiwa_color),
-        ("spacer", 6),
-        ("section", "ピクセル長"),
-        ("kv", "upper", f"{r.upper_px:.0f} px"),
-        ("kv", "middle", f"{r.middle_px:.0f} px"),
-        ("kv", "lower", f"{r.lower_px:.0f} px"),
+        ("spacer", 8),
+        ("section", "比率を図示 (中顔面=1)"),
+        ("ratio_compare", compare_items, "中顔面"),
+        ("spacer", 4),
+        ("section", "理想からの乖離 (0=完全一致)"),
+        ("diff_bar", "", diff_pct, 20.0, pill_color),
     ]
 
     return render_report_panel(spec, width, height)

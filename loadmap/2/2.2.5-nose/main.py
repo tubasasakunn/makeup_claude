@@ -160,26 +160,23 @@ C_ELINE = (80, 180, 255)   # E ライン オレンジ
 
 def annotate_face(image: np.ndarray, fm: FaceMesh, r: NoseResult,
                   scale: float = 1.0) -> np.ndarray:
+    """鼻縦線・小鼻幅・目間線のみ + 小鼻幅/目間ラベル 1 つ"""
     if scale != 1.0:
         img = cv2.resize(
             image, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC,
         )
     else:
         img = image.copy()
-    h, w = img.shape[:2]
 
     def S(p):
         return (float(p[0]) * scale, float(p[1]) * scale)
 
     nose_root = S(fm.landmarks_px[LM.NOSE_ROOT])
     nose_tip = S(fm.landmarks_px[LM.NOSE_TIP])
-    subnasal = S(fm.landmarks_px[LM.SUBNASAL])
     wing_r = S(fm.landmarks_px[LM.NOSE_WING_R])
     wing_l = S(fm.landmarks_px[LM.NOSE_WING_L])
     eye_r = S(fm.landmarks_px[LM.EYE_INNER_R])
     eye_l = S(fm.landmarks_px[LM.EYE_INNER_L])
-    upper_lip = S(fm.landmarks_px[LM.UPPER_LIP_TOP])
-    chin = S(fm.landmarks_px[LM.CHIN_BOTTOM])
 
     lw = max(2, int(2 * scale))
     pt_r = max(3, int(4 * scale))
@@ -187,34 +184,23 @@ def annotate_face(image: np.ndarray, fm: FaceMesh, r: NoseResult,
     draw_line_outlined(img, nose_root, nose_tip, C_VERT, thickness=lw)
     draw_line_outlined(img, wing_r, wing_l, C_WING, thickness=lw)
     draw_line_outlined(img, eye_r, eye_l, C_GAP, thickness=lw)
-    draw_line_outlined(img, subnasal, nose_tip, C_ANGLE, thickness=lw)
-    draw_line_outlined(img, subnasal, upper_lip, C_ANGLE, thickness=lw)
-    draw_line_outlined(img, nose_tip, chin, C_ELINE, thickness=lw)
 
     for p, col in [
-        (nose_root, C_VERT), (nose_tip, C_VERT), (subnasal, C_ANGLE),
+        (nose_root, C_VERT), (nose_tip, C_VERT),
         (wing_r, C_WING), (wing_l, C_WING),
         (eye_r, C_GAP), (eye_l, C_GAP),
-        (upper_lip, C_ELINE), (chin, C_ELINE),
     ]:
         draw_point_outlined(img, p, col, r=pt_r)
 
+    # ---- ラベル: 小鼻幅 / 目間 1 つだけ ----
     label_bg = (20, 20, 25)
-    label_size = max(14, int(15 * scale))
+    label_size = max(18, int(20 * scale))
     draw_pil_text(
-        img, f"len {r.nose_length_px:.0f}",
-        (nose_tip[0] + 12, (nose_root[1] + nose_tip[1]) / 2),
-        color=C_VERT, size=label_size, bg=label_bg, bg_alpha=0.78, bg_pad=4,
-    )
-    draw_pil_text(
-        img, f"wing {r.nose_wing_width_px:.0f}",
-        (max(wing_r[0], wing_l[0]) + 10, (wing_r[1] + wing_l[1]) / 2 - 8),
-        color=C_WING, size=label_size, bg=label_bg, bg_alpha=0.78, bg_pad=4,
-    )
-    draw_pil_text(
-        img, f"angle {r.nose_lip_angle_deg:.0f}°",
-        (subnasal[0] + 12, subnasal[1] + 4),
-        color=C_ANGLE, size=label_size, bg=label_bg, bg_alpha=0.78, bg_pad=4,
+        img, f"小鼻幅/目間 = {r.wing_to_gap_ratio:.2f}",
+        (max(wing_r[0], wing_l[0]) + int(14 * scale),
+         (wing_r[1] + wing_l[1]) / 2 - 12),
+        color=(240, 240, 245), size=label_size,
+        bg=label_bg, bg_alpha=0.78, bg_pad=6,
     )
 
     # 左上ピル
@@ -230,35 +216,6 @@ def annotate_face(image: np.ndarray, fm: FaceMesh, r: NoseResult,
         pad_x=18, pad_y=10, radius=22,
     )
 
-    # 右上凡例
-    legend_items = [
-        ("鼻縦", C_VERT),
-        ("小鼻", C_WING),
-        ("目間", C_GAP),
-        ("鼻唇角", C_ANGLE),
-        ("Eライン", C_ELINE),
-    ]
-    legend_font = max(14, int(15 * scale))
-    sw_w = int(18 * scale)
-    sw_h = int(14 * scale)
-    row_h = int(26 * scale)
-    lx = w - int(160 * scale)
-    ly = int(20 * scale)
-    cv2.rectangle(
-        img, (lx - 8, ly - 6),
-        (w - 14, ly + row_h * len(legend_items) + 4),
-        (0, 0, 0), -1,
-    )
-    for i, (name, col) in enumerate(legend_items):
-        y_item = ly + i * row_h
-        cv2.rectangle(
-            img, (lx, y_item + 4), (lx + sw_w, y_item + 4 + sw_h), col, -1,
-        )
-        draw_pil_text(
-            img, name, (lx + sw_w + 8, y_item),
-            color=(235, 235, 240), size=legend_font,
-        )
-
     return img
 
 
@@ -267,42 +224,39 @@ def build_panel(r: NoseResult, width: int, height: int) -> np.ndarray:
         (140, 255, 160) if "4/4" in r.overall or "3/4" in r.overall
         else (255, 200, 80)
     )
+    IDEAL_COL = (200, 200, 205)
 
-    def col_for(ok: bool):
-        return (140, 255, 160) if ok else (200, 200, 205)
+    wing_items = [
+        ("あなた", r.wing_to_gap_ratio,
+         f"{r.wing_to_gap_ratio:.2f}", pill_color),
+        ("理想", 1.0, "1.0", IDEAL_COL),
+    ]
+    wing_diff_pct = (r.wing_to_gap_ratio - 1.0) / 1.0 * 100
 
-    ok_wing = r.wing_loss < 0.20
-    ok_length = r.length_loss < 0.20
-    ok_angle = "Ideal" in r.angle_status
-    ok_eline = "Ideal" in r.eline_status
+    length_items = [
+        ("あなた", r.length_to_wing_ratio,
+         f"{r.length_to_wing_ratio:.2f}", pill_color),
+        ("理想", 1.5, "1.5", IDEAL_COL),
+    ]
+    length_diff_pct = (r.length_to_wing_ratio - 1.5) / 1.5 * 100
 
     spec = [
         ("title", "2.2.5  鼻", (230, 230, 230)),
-        ("subtitle", "Nose Wings / Length / Angle / E-line"),
+        ("subtitle", "Nose wing & length"),
         ("divider",),
         ("spacer", 4),
         ("section", "判定結果"),
         ("big", r.overall.upper(), pill_color),
+        ("spacer", 8),
+        ("section", "小鼻幅 / 目間 (理想 1.0)"),
+        ("ratio_compare", wing_items, "あなた"),
+        ("spacer", 2),
+        ("diff_bar", "", wing_diff_pct, 30.0, pill_color),
         ("spacer", 6),
-        ("section", "比率"),
-        ("kv", "wing / gap (理想 1.0)",
-            f"{r.wing_to_gap_ratio:.3f}", col_for(ok_wing)),
-        ("kv", "length / wing (理想 1.5)",
-            f"{r.length_to_wing_ratio:.3f}", col_for(ok_length)),
-        ("spacer", 6),
-        ("section", "鼻唇角 (理想 90-100°)"),
-        ("kv", "angle", f"{r.nose_lip_angle_deg:.1f} °", col_for(ok_angle)),
-        ("text", r.angle_status, (200, 200, 205)),
-        ("spacer", 6),
-        ("section", "E ライン"),
-        ("kv", "offset", f"{r.eline_offset_px:+.1f} px", col_for(ok_eline)),
-        ("kv", "norm", f"{r.eline_norm*100:+.2f} %"),
-        ("text", r.eline_status, (200, 200, 205)),
-        ("spacer", 6),
-        ("section", "ピクセル長"),
-        ("kv", "鼻縦", f"{r.nose_length_px:.1f} px"),
-        ("kv", "小鼻幅", f"{r.nose_wing_width_px:.1f} px"),
-        ("kv", "目間", f"{r.eye_gap_px:.1f} px"),
+        ("section", "鼻長 / 小鼻幅 (理想 1.5)"),
+        ("ratio_compare", length_items, "あなた"),
+        ("spacer", 2),
+        ("diff_bar", "", length_diff_pct, 30.0, pill_color),
     ]
 
     return render_report_panel(spec, width, height)

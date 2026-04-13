@@ -157,13 +157,13 @@ C_IRIS = (200, 140, 255)    # 虹彩垂直 マゼンタ
 
 def annotate_face(image: np.ndarray, fm: FaceMesh, r: MouthResult,
                   scale: float = 1.0) -> np.ndarray:
+    """口幅・唇厚・人中線のみ + 下唇/上唇ラベル 1 つ"""
     if scale != 1.0:
         img = cv2.resize(
             image, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC,
         )
     else:
         img = image.copy()
-    h, w = img.shape[:2]
 
     def S(p):
         return (float(p[0]) * scale, float(p[1]) * scale)
@@ -174,10 +174,6 @@ def annotate_face(image: np.ndarray, fm: FaceMesh, r: MouthResult,
     l_out = S(fm.landmarks_px[LM.LOWER_LIP_BOT])
     subnasal = S(fm.landmarks_px[LM.SUBNASAL])
     chin = S(fm.landmarks_px[LM.CHIN_BOTTOM])
-    iris_r_c = _iris_center(fm, LM.IRIS_R)
-    iris_l_c = _iris_center(fm, LM.IRIS_L)
-    iris_r = (iris_r_c[0] * scale, iris_r_c[1] * scale)
-    iris_l = (iris_l_c[0] * scale, iris_l_c[1] * scale)
 
     lw = max(2, int(2 * scale))
     pt_r = max(3, int(4 * scale))
@@ -196,16 +192,6 @@ def annotate_face(image: np.ndarray, fm: FaceMesh, r: MouthResult,
         C_PHIL, thickness=lw,
     )
 
-    # 虹彩中心 → あご までの垂直線
-    draw_line_outlined(
-        img, (iris_r[0], iris_r[1]), (iris_r[0], chin[1]),
-        C_IRIS, thickness=lw,
-    )
-    draw_line_outlined(
-        img, (iris_l[0], iris_l[1]), (iris_l[0], chin[1]),
-        C_IRIS, thickness=lw,
-    )
-
     for p, col in [
         (m_r, C_W), (m_l, C_W),
         (u_out, C_LIP), (l_out, C_LIP),
@@ -213,17 +199,14 @@ def annotate_face(image: np.ndarray, fm: FaceMesh, r: MouthResult,
     ]:
         draw_point_outlined(img, p, col, r=pt_r)
 
+    # ---- ラベル: 下唇/上唇 1 つだけ ----
     label_bg = (20, 20, 25)
-    label_size = max(14, int(15 * scale))
+    label_size = max(18, int(20 * scale))
     draw_pil_text(
-        img, f"mouth {r.mouth_width_px:.0f}",
-        ((m_r[0] + m_l[0]) / 2 - 30, max(m_r[1], m_l[1]) + 8),
-        color=C_W, size=label_size, bg=label_bg, bg_alpha=0.78, bg_pad=4,
-    )
-    draw_pil_text(
-        img, f"lip {r.lip_ratio:.2f}",
-        (max(m_r[0], m_l[0]) + 12, mouth_mid_y - 8),
-        color=C_LIP, size=label_size, bg=label_bg, bg_alpha=0.78, bg_pad=4,
+        img, f"下唇/上唇 = {r.lip_ratio:.2f}",
+        (max(m_r[0], m_l[0]) + int(14 * scale), mouth_mid_y - 12),
+        color=(240, 240, 245), size=label_size,
+        bg=label_bg, bg_alpha=0.78, bg_pad=6,
     )
 
     # 左上ピル
@@ -239,34 +222,6 @@ def annotate_face(image: np.ndarray, fm: FaceMesh, r: MouthResult,
         pad_x=18, pad_y=10, radius=22,
     )
 
-    # 右上凡例
-    legend_items = [
-        ("口幅", C_W),
-        ("唇厚", C_LIP),
-        ("人中", C_PHIL),
-        ("虹彩線", C_IRIS),
-    ]
-    legend_font = max(14, int(15 * scale))
-    sw_w = int(18 * scale)
-    sw_h = int(14 * scale)
-    row_h = int(26 * scale)
-    lx = w - int(150 * scale)
-    ly = int(20 * scale)
-    cv2.rectangle(
-        img, (lx - 8, ly - 6),
-        (w - 14, ly + row_h * len(legend_items) + 4),
-        (0, 0, 0), -1,
-    )
-    for i, (name, col) in enumerate(legend_items):
-        y_item = ly + i * row_h
-        cv2.rectangle(
-            img, (lx, y_item + 4), (lx + sw_w, y_item + 4 + sw_h), col, -1,
-        )
-        draw_pil_text(
-            img, name, (lx + sw_w + 8, y_item),
-            color=(235, 235, 240), size=legend_font,
-        )
-
     return img
 
 
@@ -275,42 +230,37 @@ def build_panel(r: MouthResult, width: int, height: int) -> np.ndarray:
         (140, 255, 160) if "4/4" in r.overall or "3/4" in r.overall
         else (255, 200, 80)
     )
+    IDEAL_COL = (200, 200, 205)
 
-    def col_for(ok: bool):
-        return (140, 255, 160) if ok else (200, 200, 205)
+    lip_items = [
+        ("あなた", r.lip_ratio, f"{r.lip_ratio:.2f}", pill_color),
+        ("理想", 1.75, "1.75", IDEAL_COL),
+    ]
+    lip_diff_pct = (r.lip_ratio - 1.75) / 1.75 * 100
 
-    ok_lip = "Ideal" in r.lip_status
-    ok_phil = "Ideal" in r.philtrum_status
-    ok_align = "Ideal" in r.alignment_status
-    ok_face = 0.32 <= r.mouth_to_face_ratio <= 0.40
+    phil_items = [
+        ("あなた", r.philtrum_ratio, f"{r.philtrum_ratio:.2f}", pill_color),
+        ("理想", 2.0, "2.0", IDEAL_COL),
+    ]
+    phil_diff_pct = (r.philtrum_ratio - 2.0) / 2.0 * 100
 
     spec = [
         ("title", "2.2.6  口", (230, 230, 230)),
-        ("subtitle", "Lip Ratio / Philtrum / Width"),
+        ("subtitle", "Lip Ratio / Philtrum"),
         ("divider",),
         ("spacer", 4),
         ("section", "判定結果"),
         ("big", r.overall.upper(), pill_color),
+        ("spacer", 8),
+        ("section", "下唇 / 上唇 (理想 1.5-2.0)"),
+        ("ratio_compare", lip_items, "あなた"),
+        ("spacer", 2),
+        ("diff_bar", "", lip_diff_pct, 50.0, pill_color),
         ("spacer", 6),
-        ("section", "唇 (理想 1.5-2)"),
-        ("kv", "lip lower/upper", f"{r.lip_ratio:.2f}", col_for(ok_lip)),
-        ("text", r.lip_status, (200, 200, 205)),
-        ("spacer", 4),
-        ("section", "人中 (理想 ~2.0)"),
-        ("kv", "philtrum bot/top",
-            f"{r.philtrum_ratio:.2f}", col_for(ok_phil)),
-        ("text", r.philtrum_status, (200, 200, 205)),
-        ("spacer", 4),
-        ("section", "口 / 顔横幅 (理想 32-40%)"),
-        ("kv", "mouth/face",
-            f"{r.mouth_to_face_ratio*100:.1f} %", col_for(ok_face)),
-        ("kv", "iris align Δ",
-            f"{r.iris_edge_align_px:.1f} px", col_for(ok_align)),
-        ("spacer", 4),
-        ("section", "ピクセル長"),
-        ("kv", "口幅", f"{r.mouth_width_px:.1f} px"),
-        ("kv", "上唇厚", f"{r.upper_lip_thickness_px:.1f} px"),
-        ("kv", "下唇厚", f"{r.lower_lip_thickness_px:.1f} px"),
+        ("section", "人中比 (理想 2.0)"),
+        ("ratio_compare", phil_items, "あなた"),
+        ("spacer", 2),
+        ("diff_bar", "", phil_diff_pct, 30.0, pill_color),
     ]
 
     return render_report_panel(spec, width, height)
