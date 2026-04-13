@@ -1,0 +1,779 @@
+{
+  "input": "imgs/base.png",
+  "profile": {
+    "skeletal": {
+      "type": "long",
+      "type_label": "面長 (縦>>横)",
+      "features": {
+        "aspect": 1.216300723426202,
+        "cheek_to_temple": 1.0079461476585925,
+        "jaw_ratio": 0.7873878448198528,
+        "forehead_ratio": 0.8641940308288752,
+        "chin_angle": 120.19847475841247,
+        "taper": 0.21261215518014717
+      },
+      "scores": {
+        "base": 0.5694006393250534,
+        "round": 0.8021515249629944,
+        "oval": 0.7818482162495138,
+        "inverted_triangle": 0.6991372284479626,
+        "long": 0.9127903080657447
+      },
+      "metrics": {
+        "face_height_px": 613.0203911779771,
+        "forehead_to_brow_px": 123.0,
+        "brow_to_subnasal_px": 251.0,
+        "subnasal_to_chin_px": 239.0,
+        "face_width_temple_px": 504.0039682383463,
+        "face_width_cheekbone_px": 508.0088581904847,
+        "face_width_jaw_px": 400.0,
+        "forehead_width_px": 439.01822285640947,
+        "eye_width_r_px": 92.43916918709297,
+        "eye_width_l_px": 92.65527507918802,
+        "eye_height_r_px": 28.071337695236398,
+        "eye_height_l_px": 28.160255680657446,
+        "eye_inner_gap_px": 137.00364958642524,
+        "iris_r_diameter_px": 44.0,
+        "iris_l_diameter_px": 45.0,
+        "nose_length_px": 188.0,
+        "nose_wing_width_px": 141.00354605470034,
+        "mouth_width_px": 179.00279327429502,
+        "upper_lip_thickness_px": 25.0,
+        "lower_lip_thickness_px": 36.013886210738214,
+        "philtrum_px": 56.0357029044876,
+        "chin_angle_deg": 120.19847475841247,
+        "face_aspect": 1.216300723426202
+      }
+    },
+    "face_ratio": {
+      "face_height_px_raw": 613.0203911779771,
+      "face_height_px": 766.2754889724714,
+      "face_width_px": 504.0039682383463,
+      "aspect_raw": 1.216300723426202,
+      "aspect": 1.5203759042827525,
+      "losses": {
+        "golden": 0.060336276710289,
+        "silver": 0.07523048393405415,
+        "japanese": 0.0413533590977757
+      },
+      "closest_ratio": "japanese",
+      "impression": "Modern Balance",
+      "mm_per_pixel": 0.26292134831460673,
+      "face_height_cm": 20.147018474107675,
+      "face_width_cm": 13.251340288513825,
+      "kogao_score": 99.63513590287164,
+      "kogao_label": "Very Small (+)",
+      "vs_aist_height": 0.8684059687115377,
+      "vs_aist_width": 0.9138855371388845
+    },
+    "vertical": {
+      "hairline_y": 209.31,
+      "brow_y": 441.0,
+      "subnasal_y": 663.0,
+      "chin_y": 902.0,
+      "upper_px": 231.69,
+      "middle_px": 222.0,
+      "lower_px": 239.0,
+      "upper_norm": 1.0436486486486487,
+      "middle_norm": 1.0,
+      "lower_norm": 1.0765765765765767,
+      "traditional_loss": 0.050889346000387595,
+      "reiwa_loss": 0.16165787664042452,
+      "closest": "traditional",
+      "category": "Traditional Balanced"
+    },
+    "horizontal": {
+      "seg_px": [
+        88.0,
+        92.0,
+        137.0,
+        92.0,
+        95.0
+      ],
+      "seg_norm": [
+        0.9565217391304348,
+        1.0,
+        1.4891304347826086,
+        1.0,
+        1.0326086956521738
+      ],
+      "eye_gap_ratio": 1.4891304347826086,
+      "left_right_balance": -0.07650273224043716,
+      "ideal_loss_1": 0.22009192099257155,
+      "jp_loss": 0.19579704781213397,
+      "closest": "japanese_1_115_1",
+      "category": "Ideal"
+    },
+    "eye": {
+      "right": {
+        "width_px": 92.43916918709297,
+        "height_px": 28.071337695236398,
+        "ratio": 0.303673626040723,
+        "iris_diameter_px": 44.0,
+        "white_left_px": 25.0,
+        "black_px": 44.0,
+        "white_right_px": 23.0,
+        "iris_norm": [
+          0.5681818181818182,
+          1.0,
+          0.5227272727272727
+        ],
+        "iris_loss": 0.04149413314433079
+      },
+      "left": {
+        "width_px": 92.65527507918802,
+        "height_px": 28.160255680657446,
+        "ratio": 0.3039250129751407,
+        "iris_diameter_px": 45.0,
+        "white_left_px": 23.0,
+        "black_px": 45.0,
+        "white_right_px": 24.0,
+        "iris_norm": [
+          0.5111111111111111,
+          1.0,
+          0.5333333333333333
+        ],
+        "iris_loss": 0.020286020648339474
+      },
+      "mean_width_ratio": 0.3037993195079318,
+      "ideal_ratio_loss": 0.029534013825401495,
+      "symmetry_score": 0.9972511744587776,
+      "eye_to_face_ratio": 0.18362399497889348,
+      "category": "Balanced"
+    },
+    "nose": {
+      "nose_length_px": 164.00304875214974,
+      "nose_wing_width_px": 141.00354605470034,
+      "eye_gap_px": 137.00364958642524,
+      "wing_to_gap_ratio": 1.0291955468365233,
+      "length_to_wing_ratio": 1.1631129382272916,
+      "nose_lip_angle_deg": 179.65946445849846,
+      "eline_offset_px": -2.087316679154919,
+      "eline_norm": -0.007936049032929543,
+      "wing_loss": 0.029195546836523256,
+      "length_loss": 0.22459137451513897,
+      "angle_status": "Obtuse",
+      "eline_status": "Ideal (on line)",
+      "overall": "2/4 ideal"
+    },
+    "mouth": {
+      "mouth_width_px": 179.00279327429502,
+      "upper_lip_thickness_px": 25.0,
+      "lower_lip_thickness_px": 36.013886210738214,
+      "lip_ratio": 1.4405554484295287,
+      "philtrum_top_px": 86.5,
+      "philtrum_bot_px": 152.5,
+      "philtrum_ratio": 1.7630057803468209,
+      "iris_edge_align_px": 24.100000000000023,
+      "mouth_to_face_ratio": 0.3551614760097357,
+      "lip_status": "Ideal (1.5-2 range)",
+      "philtrum_status": "Ideal (~2.0)",
+      "alignment_status": "Off (diff>12%)",
+      "overall": "3/4 ideal"
+    },
+    "eyebrow": {
+      "right": {
+        "head": [
+          453.0,
+          442.0
+        ],
+        "peak": [
+          345.0,
+          396.0
+        ],
+        "tail": [
+          303.0,
+          442.0
+        ],
+        "head_deviation_px": 19.0,
+        "tail_deviation_px": 11.99240095686961,
+        "peak_deviation_px": 11.324659824167412,
+        "head_to_peak_px": 117.38824472663352,
+        "peak_to_tail_px": 62.289646009589745,
+        "peak_ratio": 1.884554693223993,
+        "horizontal_tilt_deg": 0.0,
+        "angle_head_to_peak_deg": 23.07041224982465
+      },
+      "left": {
+        "head": [
+          549.0,
+          440.0
+        ],
+        "peak": [
+          658.0,
+          392.0
+        ],
+        "tail": [
+          703.0,
+          439.0
+        ],
+        "head_deviation_px": 22.0,
+        "tail_deviation_px": 12.435916086687204,
+        "peak_deviation_px": 52.68464877218301,
+        "head_to_peak_px": 119.10079764636339,
+        "peak_to_tail_px": 65.06919393998976,
+        "peak_ratio": 1.8303714927866546,
+        "horizontal_tilt_deg": -0.37204528720329566,
+        "angle_head_to_peak_deg": 23.76710770458157
+      },
+      "symmetry_score": 0.3139559248170876,
+      "category": "Masculine Rising (>=8 deg)"
+    },
+    "symmetry": {
+      "eye_sym": 0.9972511744587776,
+      "brow_sym": 0.3139559248170876,
+      "face_contour_sym": 0.9763779527559056,
+      "overall_sym": 0.762528350677257,
+      "jaw_line_sharpness": 0.6543643149147735,
+      "cheek_ratio_r": 0.6507936507936508,
+      "cheek_ratio_l": 0.6827067669172929,
+      "sub_results": {
+        "skeletal": {
+          "type": "long",
+          "type_label": "面長 (縦>>横)",
+          "features": {
+            "aspect": 1.216300723426202,
+            "cheek_to_temple": 1.0079461476585925,
+            "jaw_ratio": 0.7873878448198528,
+            "forehead_ratio": 0.8641940308288752,
+            "chin_angle": 120.19847475841247,
+            "taper": 0.21261215518014717
+          },
+          "scores": {
+            "base": 0.5694006393250534,
+            "round": 0.8021515249629944,
+            "oval": 0.7818482162495138,
+            "inverted_triangle": 0.6991372284479626,
+            "long": 0.9127903080657447
+          },
+          "metrics": {
+            "face_height_px": 613.0203911779771,
+            "forehead_to_brow_px": 123.0,
+            "brow_to_subnasal_px": 251.0,
+            "subnasal_to_chin_px": 239.0,
+            "face_width_temple_px": 504.0039682383463,
+            "face_width_cheekbone_px": 508.0088581904847,
+            "face_width_jaw_px": 400.0,
+            "forehead_width_px": 439.01822285640947,
+            "eye_width_r_px": 92.43916918709297,
+            "eye_width_l_px": 92.65527507918802,
+            "eye_height_r_px": 28.071337695236398,
+            "eye_height_l_px": 28.160255680657446,
+            "eye_inner_gap_px": 137.00364958642524,
+            "iris_r_diameter_px": 44.0,
+            "iris_l_diameter_px": 45.0,
+            "nose_length_px": 188.0,
+            "nose_wing_width_px": 141.00354605470034,
+            "mouth_width_px": 179.00279327429502,
+            "upper_lip_thickness_px": 25.0,
+            "lower_lip_thickness_px": 36.013886210738214,
+            "philtrum_px": 56.0357029044876,
+            "chin_angle_deg": 120.19847475841247,
+            "face_aspect": 1.216300723426202
+          }
+        },
+        "face_ratio": {
+          "face_height_px_raw": 613.0203911779771,
+          "face_height_px": 766.2754889724714,
+          "face_width_px": 504.0039682383463,
+          "aspect_raw": 1.216300723426202,
+          "aspect": 1.5203759042827525,
+          "losses": {
+            "golden": 0.060336276710289,
+            "silver": 0.07523048393405415,
+            "japanese": 0.0413533590977757
+          },
+          "closest_ratio": "japanese",
+          "impression": "Modern Balance",
+          "mm_per_pixel": 0.26292134831460673,
+          "face_height_cm": 20.147018474107675,
+          "face_width_cm": 13.251340288513825,
+          "kogao_score": 99.63513590287164,
+          "kogao_label": "Very Small (+)",
+          "vs_aist_height": 0.8684059687115377,
+          "vs_aist_width": 0.9138855371388845
+        },
+        "vertical": {
+          "hairline_y": 209.31,
+          "brow_y": 441.0,
+          "subnasal_y": 663.0,
+          "chin_y": 902.0,
+          "upper_px": 231.69,
+          "middle_px": 222.0,
+          "lower_px": 239.0,
+          "upper_norm": 1.0436486486486487,
+          "middle_norm": 1.0,
+          "lower_norm": 1.0765765765765767,
+          "traditional_loss": 0.050889346000387595,
+          "reiwa_loss": 0.16165787664042452,
+          "closest": "traditional",
+          "category": "Traditional Balanced"
+        },
+        "horizontal": {
+          "seg_px": [
+            88.0,
+            92.0,
+            137.0,
+            92.0,
+            95.0
+          ],
+          "seg_norm": [
+            0.9565217391304348,
+            1.0,
+            1.4891304347826086,
+            1.0,
+            1.0326086956521738
+          ],
+          "eye_gap_ratio": 1.4891304347826086,
+          "left_right_balance": -0.07650273224043716,
+          "ideal_loss_1": 0.22009192099257155,
+          "jp_loss": 0.19579704781213397,
+          "closest": "japanese_1_115_1",
+          "category": "Ideal"
+        },
+        "eye": {
+          "right": {
+            "width_px": 92.43916918709297,
+            "height_px": 28.071337695236398,
+            "ratio": 0.303673626040723,
+            "iris_diameter_px": 44.0,
+            "white_left_px": 25.0,
+            "black_px": 44.0,
+            "white_right_px": 23.0,
+            "iris_norm": [
+              0.5681818181818182,
+              1.0,
+              0.5227272727272727
+            ],
+            "iris_loss": 0.04149413314433079
+          },
+          "left": {
+            "width_px": 92.65527507918802,
+            "height_px": 28.160255680657446,
+            "ratio": 0.3039250129751407,
+            "iris_diameter_px": 45.0,
+            "white_left_px": 23.0,
+            "black_px": 45.0,
+            "white_right_px": 24.0,
+            "iris_norm": [
+              0.5111111111111111,
+              1.0,
+              0.5333333333333333
+            ],
+            "iris_loss": 0.020286020648339474
+          },
+          "mean_width_ratio": 0.3037993195079318,
+          "ideal_ratio_loss": 0.029534013825401495,
+          "symmetry_score": 0.9972511744587776,
+          "eye_to_face_ratio": 0.18362399497889348,
+          "category": "Balanced"
+        },
+        "nose": {
+          "nose_length_px": 164.00304875214974,
+          "nose_wing_width_px": 141.00354605470034,
+          "eye_gap_px": 137.00364958642524,
+          "wing_to_gap_ratio": 1.0291955468365233,
+          "length_to_wing_ratio": 1.1631129382272916,
+          "nose_lip_angle_deg": 179.65946445849846,
+          "eline_offset_px": -2.087316679154919,
+          "eline_norm": -0.007936049032929543,
+          "wing_loss": 0.029195546836523256,
+          "length_loss": 0.22459137451513897,
+          "angle_status": "Obtuse",
+          "eline_status": "Ideal (on line)",
+          "overall": "2/4 ideal"
+        },
+        "mouth": {
+          "mouth_width_px": 179.00279327429502,
+          "upper_lip_thickness_px": 25.0,
+          "lower_lip_thickness_px": 36.013886210738214,
+          "lip_ratio": 1.4405554484295287,
+          "philtrum_top_px": 86.5,
+          "philtrum_bot_px": 152.5,
+          "philtrum_ratio": 1.7630057803468209,
+          "iris_edge_align_px": 24.100000000000023,
+          "mouth_to_face_ratio": 0.3551614760097357,
+          "lip_status": "Ideal (1.5-2 range)",
+          "philtrum_status": "Ideal (~2.0)",
+          "alignment_status": "Off (diff>12%)",
+          "overall": "3/4 ideal"
+        },
+        "eyebrow": {
+          "right": {
+            "head": [
+              453.0,
+              442.0
+            ],
+            "peak": [
+              345.0,
+              396.0
+            ],
+            "tail": [
+              303.0,
+              442.0
+            ],
+            "head_deviation_px": 19.0,
+            "tail_deviation_px": 11.99240095686961,
+            "peak_deviation_px": 11.324659824167412,
+            "head_to_peak_px": 117.38824472663352,
+            "peak_to_tail_px": 62.289646009589745,
+            "peak_ratio": 1.884554693223993,
+            "horizontal_tilt_deg": 0.0,
+            "angle_head_to_peak_deg": 23.07041224982465
+          },
+          "left": {
+            "head": [
+              549.0,
+              440.0
+            ],
+            "peak": [
+              658.0,
+              392.0
+            ],
+            "tail": [
+              703.0,
+              439.0
+            ],
+            "head_deviation_px": 22.0,
+            "tail_deviation_px": 12.435916086687204,
+            "peak_deviation_px": 52.68464877218301,
+            "head_to_peak_px": 119.10079764636339,
+            "peak_to_tail_px": 65.06919393998976,
+            "peak_ratio": 1.8303714927866546,
+            "horizontal_tilt_deg": -0.37204528720329566,
+            "angle_head_to_peak_deg": 23.76710770458157
+          },
+          "symmetry_score": 0.3139559248170876,
+          "category": "Masculine Rising (>=8 deg)"
+        }
+      },
+      "golden_score": 68.77801506540587,
+      "golden_label": "B (Average)"
+    },
+    "summary": {
+      "skeletal_type": "long",
+      "skeletal_label": "面長 (縦>>横)",
+      "closest_ratio": "japanese",
+      "kogao_label": "Very Small (+)",
+      "face_aspect": 1.5203759042827525,
+      "vertical_category": "Traditional Balanced",
+      "vertical_closest": "traditional",
+      "horizontal_category": "Ideal",
+      "eye_gap_ratio": 1.4891304347826086,
+      "eye_category": "Balanced",
+      "eye_to_face_ratio": 0.18362399497889348,
+      "nose_overall": "2/4 ideal",
+      "nose_angle": 179.65946445849846,
+      "mouth_overall": "3/4 ideal",
+      "lip_ratio": 1.4405554484295287,
+      "eyebrow_category": "Masculine Rising (>=8 deg)",
+      "eyebrow_symmetry": 0.3139559248170876,
+      "overall_sym": 0.762528350677257,
+      "golden_score": 68.77801506540587,
+      "golden_label": "B (Average)"
+    }
+  },
+  "plan": {
+    "skeletal_type": "long",
+    "skeletal_label": "面長 - 横幅を広げて縦を抑える",
+    "advice": "おでこと顎先にシャドウを入れて縦幅を圧縮。平行眉で横強調。",
+    "overall_modifier": 1.15,
+    "steps": [
+      {
+        "stage": "base",
+        "area": "full_face",
+        "color_rgb": [
+          235,
+          200,
+          170
+        ],
+        "intensity": 0.2875,
+        "blend": "normal",
+        "meta": {}
+      },
+      {
+        "stage": "shadow",
+        "area": "omonaga-upper",
+        "color_rgb": [
+          120,
+          85,
+          60
+        ],
+        "intensity": 0.253,
+        "blend": "multiply",
+        "meta": {}
+      },
+      {
+        "stage": "shadow",
+        "area": "omonaga-lower",
+        "color_rgb": [
+          120,
+          85,
+          60
+        ],
+        "intensity": 0.253,
+        "blend": "multiply",
+        "meta": {}
+      },
+      {
+        "stage": "highlight",
+        "area": "base_",
+        "color_rgb": [
+          255,
+          248,
+          235
+        ],
+        "intensity": 0.11499999999999999,
+        "blend": "additive",
+        "meta": {}
+      },
+      {
+        "stage": "highlight",
+        "area": "omonaga_",
+        "color_rgb": [
+          255,
+          248,
+          235
+        ],
+        "intensity": 0.11499999999999999,
+        "blend": "additive",
+        "meta": {}
+      },
+      {
+        "stage": "eye",
+        "area": "eyeshadow_base",
+        "color_rgb": [
+          190,
+          145,
+          120
+        ],
+        "intensity": 0.40249999999999997,
+        "blend": "normal",
+        "meta": {
+          "eye_category": "Balanced"
+        }
+      },
+      {
+        "stage": "eye",
+        "area": "eyeshadow_crease",
+        "color_rgb": [
+          160,
+          110,
+          85
+        ],
+        "intensity": 0.2875,
+        "blend": "normal",
+        "meta": {
+          "eye_category": "Balanced"
+        }
+      },
+      {
+        "stage": "eye",
+        "area": "tear_bag",
+        "color_rgb": [
+          255,
+          230,
+          215
+        ],
+        "intensity": 0.13799999999999998,
+        "blend": "additive",
+        "meta": {
+          "eye_category": "Balanced"
+        }
+      },
+      {
+        "stage": "eye",
+        "area": "lower_outer",
+        "color_rgb": [
+          180,
+          100,
+          85
+        ],
+        "intensity": 0.207,
+        "blend": "normal",
+        "meta": {
+          "eye_category": "Balanced"
+        }
+      },
+      {
+        "stage": "eye",
+        "area": "eyeliner",
+        "color_rgb": [
+          35,
+          20,
+          10
+        ],
+        "intensity": 0.6325,
+        "blend": "normal",
+        "meta": {
+          "eye_category": "Balanced"
+        }
+      },
+      {
+        "stage": "eyebrow",
+        "area": "parallel",
+        "color_rgb": [
+          85,
+          60,
+          45
+        ],
+        "intensity": 0.8049999999999999,
+        "blend": "normal",
+        "meta": {
+          "current": "Masculine Rising (>=8 deg)"
+        }
+      }
+    ],
+    "rationale": [
+      "骨格判定: long (面長 - 横幅を広げて縦を抑える)",
+      "golden=68.8 (<70) なので全体 +15%",
+      "シャドウ: ['omonaga-upper', 'omonaga-lower'] で輪郭を補正",
+      "ハイライト: ['base_', 'omonaga_'] を塗布",
+      "目判定: Balanced → shadow x1.00, liner x1.00",
+      "眉判定: 現在=Masculine Rising (>=8 deg) → 目標=parallel"
+    ]
+  },
+  "applied_log": [
+    {
+      "stage": "base",
+      "areas": [
+        "full_face"
+      ],
+      "intensity": 0.2875,
+      "color_rgb": [
+        235,
+        200,
+        170
+      ]
+    },
+    {
+      "stage": "shadow",
+      "areas": [
+        "omonaga-upper"
+      ],
+      "intensity": 0.253,
+      "color_rgb": [
+        120,
+        85,
+        60
+      ]
+    },
+    {
+      "stage": "shadow",
+      "areas": [
+        "omonaga-lower"
+      ],
+      "intensity": 0.253,
+      "color_rgb": [
+        120,
+        85,
+        60
+      ]
+    },
+    {
+      "stage": "highlight",
+      "areas": [
+        "base_t-zone",
+        "base_c-zone",
+        "base_under-eye",
+        "base_megasira",
+        "base_zintyuu"
+      ],
+      "intensity": 0.11499999999999999,
+      "color_rgb": [
+        255,
+        248,
+        235
+      ]
+    },
+    {
+      "stage": "highlight",
+      "areas": [
+        "omonaga_t-zone",
+        "omonaga_c-zone"
+      ],
+      "intensity": 0.11499999999999999,
+      "color_rgb": [
+        255,
+        248,
+        235
+      ]
+    },
+    {
+      "stage": "eye",
+      "areas": [
+        "eyeshadow_base"
+      ],
+      "intensity": 0.40249999999999997,
+      "color_rgb": [
+        190,
+        145,
+        120
+      ]
+    },
+    {
+      "stage": "eye",
+      "areas": [
+        "eyeshadow_crease"
+      ],
+      "intensity": 0.2875,
+      "color_rgb": [
+        160,
+        110,
+        85
+      ]
+    },
+    {
+      "stage": "eye",
+      "areas": [
+        "tear_bag"
+      ],
+      "intensity": 0.13799999999999998,
+      "color_rgb": [
+        255,
+        230,
+        215
+      ]
+    },
+    {
+      "stage": "eye",
+      "areas": [
+        "lower_outer"
+      ],
+      "intensity": 0.207,
+      "color_rgb": [
+        180,
+        100,
+        85
+      ]
+    },
+    {
+      "stage": "eye",
+      "areas": [
+        "eyeliner"
+      ],
+      "intensity": 0.6325,
+      "color_rgb": [
+        35,
+        20,
+        10
+      ]
+    },
+    {
+      "stage": "eyebrow",
+      "areas": [
+        "parallel"
+      ],
+      "intensity": 0.8049999999999999,
+      "color_rgb": [
+        85,
+        60,
+        45
+      ]
+    }
+  ],
+  "output": {
+    "after": "loadmap/3-makeup-selection/results/base_after.png",
+    "compare": "loadmap/3-makeup-selection/results/base_compare.png"
+  }
+}
