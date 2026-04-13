@@ -205,9 +205,9 @@ RATIO_IMPRESSION = {
 
 def annotate_face(image: np.ndarray, fm: FaceMesh, r: FaceRatioResult,
                   scale: float = 1.0) -> np.ndarray:
-    """顔画像に実測の縦横線 + 理想比の参照破線を重ねる
+    """顔画像に「本人の縦横線と縦横比」だけを重ねる
 
-    数字を減らし、「あごがどこに来れば黄金比か」を視覚的に示す。
+    理想比の参照線は描かない (パネル側で比較する)。
     """
     if scale != 1.0:
         img = cv2.resize(
@@ -225,7 +225,7 @@ def annotate_face(image: np.ndarray, fm: FaceMesh, r: FaceRatioResult,
     p_tr = S(fm.landmarks_px[LM.TEMPLE_R])
     p_tl = S(fm.landmarks_px[LM.TEMPLE_L])
 
-    # 補正した生え際 (scale 済み) = face_height_ext の上端
+    # 補正した生え際 (scale 済み)
     ext_raw_px = r.face_height_px - r.face_height_px_raw
     dy_top_chin = p_top[1] - p_chin[1]
     ext_len_ref = abs(dy_top_chin) if abs(dy_top_chin) > 1e-3 else 1.0
@@ -234,56 +234,24 @@ def annotate_face(image: np.ndarray, fm: FaceMesh, r: FaceRatioResult,
 
     lw = max(2, int(2 * scale))
 
-    # ---- あなたの顔の縦横軸 (実線) ----
+    # 本人の縦横軸
     draw_line_outlined(img, p_top_ext, p_chin, C_H, thickness=lw)
     draw_line_outlined(img, p_tr, p_tl, C_W, thickness=lw)
     for pt, col in [(p_top_ext, C_H), (p_chin, C_H),
                     (p_tr, C_W), (p_tl, C_W)]:
         draw_point_outlined(img, pt, col, r=max(3, int(4 * scale)))
 
-    # ---- 理想比の参照線 (破線) ----
-    # 横幅を固定し、縦幅 = 横幅 * ideal_ratio になる位置にあごが来るべき
-    # あごの位置を水平破線で引く (左右にはみ出し気味で)
-    cx_face = (p_tr[0] + p_tl[0]) / 2
-    face_w_scaled = abs(p_tl[0] - p_tr[0])
-    line_len = face_w_scaled * 1.15  # 少しはみ出し
-
-    for name, ratio in RATIO_VALUE.items():
-        ideal_h = face_w_scaled * ratio  # 補正後の縦幅 = w * ratio
-        ideal_chin_y = p_top_ext[1] + ideal_h  # top_ext から下に
-        col = RATIO_COLOR[name]
-        draw_dashed_line(
-            img,
-            (cx_face - line_len / 2, ideal_chin_y),
-            (cx_face + line_len / 2, ideal_chin_y),
-            col, thickness=max(2, int(2 * scale)),
-            dash_len=int(10 * scale), gap_len=int(6 * scale),
-        )
-        # ラベル (ライン右端)
-        label_size = max(13, int(14 * scale))
-        draw_pil_text(
-            img,
-            f"{RATIO_JP[name]} {ratio}",
-            (cx_face + line_len / 2 + 4, ideal_chin_y - 10),
-            color=col, size=label_size,
-            bg=(20, 20, 25), bg_alpha=0.78, bg_pad=4,
-        )
-
-    # あなたの実際のあご位置を強調 (白いマーカー線)
-    draw_line_outlined(
-        img,
-        (p_chin[0] - line_len / 2 + face_w_scaled / 2, p_chin[1]),
-        (p_chin[0] + line_len / 2 - face_w_scaled / 2, p_chin[1]),
-        (255, 255, 255), thickness=max(1, int(1 * scale)),
-    )
+    # 比率ラベル: 縦横比 を 1 つだけシンプルに表示
+    label_bg = (20, 20, 25)
+    label_size = max(18, int(20 * scale))
     draw_pil_text(
-        img, "あご",
-        (cx_face - line_len / 2 - int(60 * scale), p_chin[1] - 10),
-        color=(255, 255, 255), size=max(13, int(14 * scale)),
-        bg=(20, 20, 25), bg_alpha=0.78, bg_pad=4,
+        img, f"縦/横 = {r.aspect:.2f}",
+        (p_chin[0] + 14, p_chin[1] - 12),
+        color=(240, 240, 245), size=label_size,
+        bg=label_bg, bg_alpha=0.78, bg_pad=6,
     )
 
-    # ---- 左上ピル: closest ratio ----
+    # 左上ピル: closest ratio
     label_color = RATIO_COLOR.get(r.closest_ratio, (255, 255, 255))
     pill_text = RATIO_JP.get(r.closest_ratio, r.closest_ratio).upper()
     pill_size = int(24 * max(1.0, scale * 0.9))
