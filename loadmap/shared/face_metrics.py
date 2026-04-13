@@ -340,6 +340,39 @@ def draw_line_outlined(img, a, b, color=(0, 255, 255),
     cv2.line(img, a, b, color, thickness, cv2.LINE_AA)
 
 
+def draw_dashed_line(img, a, b, color=(0, 255, 255),
+                     thickness: int = 2, dash_len: int = 10,
+                     gap_len: int = 6, outline: int = 1,
+                     outline_color=(0, 0, 0)):
+    """破線を描画 (理想値の参照線などに使う)"""
+    import cv2
+    import math
+    ax, ay = float(a[0]), float(a[1])
+    bx, by = float(b[0]), float(b[1])
+    dx, dy = bx - ax, by - ay
+    length = math.hypot(dx, dy)
+    if length < 1e-3:
+        return
+    ux, uy = dx / length, dy / length
+    step = dash_len + gap_len
+    t = 0.0
+    while t < length:
+        x0 = ax + ux * t
+        y0 = ay + uy * t
+        end = min(t + dash_len, length)
+        x1 = ax + ux * end
+        y1 = ay + uy * end
+        p0 = (int(x0), int(y0))
+        p1 = (int(x1), int(y1))
+        if outline > 0:
+            cv2.line(
+                img, p0, p1, outline_color,
+                thickness + outline * 2, cv2.LINE_AA,
+            )
+        cv2.line(img, p0, p1, color, thickness, cv2.LINE_AA)
+        t += step
+
+
 def draw_point_outlined(img, p, color=(0, 255, 255), r: int = 5,
                         outline_color=(0, 0, 0), outline: int = 1):
     """縁取り付きの点"""
@@ -545,6 +578,145 @@ def render_report_panel(spec: list, width: int, height: int) -> "np.ndarray":
 
         elif tag == "spacer":
             y += int(item[1])
+
+        elif tag == "ratio_compare":
+            # 比率を四角形で視覚化: 同じ基準 (width) で、height = aspect * width
+            # 複数項目を横並びで表示、差分 % を下に表示
+            #
+            # spec: ('ratio_compare', items, highlight_label)
+            #   items = [(label, aspect, value_str, color_bgr), ...]
+            #   highlight_label: 最も近い項目のラベル
+            items = item[1]
+            highlight = item[2] if len(item) > 2 else None
+            if not items:
+                continue
+
+            n = len(items)
+            avail_w = width - pad_x * 2
+            gap = 18
+            # 各アイテムは四角 + ラベル を持つ
+            item_w = (avail_w - gap * (n - 1)) // n
+            # アスペクト最大値で高さを決定
+            max_aspect = max(max(a for _, a, _, _ in items), 0.01)
+            max_h = min(int(item_w * max_aspect), 180)
+            base_w = int(max_h / max_aspect)  # 基準幅 (比率に合わせて統一)
+
+            # 描画位置: y 開始
+            row_y = y + 8
+            arr = np.array(img)[:, :, ::-1].copy()
+            import cv2 as _cv2
+            for i, (label, aspect, value_str, col_bgr) in enumerate(items):
+                is_hi = (label == highlight)
+                cx = pad_x + i * (item_w + gap) + item_w // 2
+                rect_h = int(base_w * aspect)
+                rect_w = base_w
+                x0 = int(cx - rect_w / 2)
+                y0 = row_y
+                x1 = x0 + rect_w
+                y1 = y0 + rect_h
+                col = col_bgr
+                # 枠線 (ハイライトは太線、他は薄)
+                thickness = 3 if is_hi else 2
+                _cv2.rectangle(arr, (x0, y0), (x1, y1),
+                               col if is_hi else (110, 110, 120),
+                               thickness, _cv2.LINE_AA)
+                # 半透明塗り (ハイライトのみ)
+                if is_hi:
+                    overlay = arr.copy()
+                    _cv2.rectangle(overlay, (x0, y0), (x1, y1), col, -1)
+                    _cv2.addWeighted(overlay, 0.22, arr, 0.78, 0, arr)
+            img = Image.fromarray(arr[:, :, ::-1])
+            draw = ImageDraw.Draw(img, "RGBA")
+
+            # ラベル (四角の下)
+            label_y = row_y + max_h + 6
+            f_lab = _get_font(14)
+            f_val = _get_font(15, mono=True)
+            for i, (label, aspect, value_str, col_bgr) in enumerate(items):
+                is_hi = (label == highlight)
+                cx = pad_x + i * (item_w + gap) + item_w // 2
+                col_rgb = (
+                    _bgr_to_rgb(col_bgr) if is_hi else _THEME["fg_dim"]
+                )
+                tw, _ = _pil_text_size(draw, label, f_lab)
+                draw.text(
+                    (cx - tw / 2, label_y),
+                    label, font=f_lab, fill=col_rgb,
+                )
+                vw, _ = _pil_text_size(draw, value_str, f_val)
+                draw.text(
+                    (cx - vw / 2, label_y + 18),
+                    value_str, font=f_val, fill=col_rgb,
+                )
+            y = label_y + 44
+
+        elif tag == "diff_bar":
+            # 差分バー: 中央を 0、左右に +/- 差を表示
+            #
+            # spec: ('diff_bar', label, diff_pct, max_pct, color_bgr)
+            label = item[1]
+            diff_pct = float(item[2])
+            max_pct = float(item[3]) if len(item) > 3 else 20.0
+            col_bgr = item[4] if len(item) > 4 else (80, 220, 255)
+
+            # ラベル
+            draw.text((pad_x, y), label, font=f_text, fill=_THEME["fg"])
+            y += 22
+            # バー (中央 0、左右 ±max_pct)
+            bar_x0 = pad_x
+            bar_x1 = width - pad_x
+            bar_cx = (bar_x0 + bar_x1) // 2
+            bar_y0 = y
+            bar_y1 = y + 14
+            # 背景
+            draw.rectangle(
+                [(bar_x0, bar_y0), (bar_x1, bar_y1)],
+                fill=_THEME["bar_bg"],
+            )
+            # 中央線
+            draw.line(
+                [(bar_cx, bar_y0 - 2), (bar_cx, bar_y1 + 2)],
+                fill=_THEME["divider"], width=1,
+            )
+            # 差分バー本体
+            half_w = (bar_x1 - bar_x0) // 2
+            pct_ratio = max(-1.0, min(1.0, diff_pct / max_pct))
+            col_rgb = _bgr_to_rgb(col_bgr)
+            if pct_ratio >= 0:
+                fill_x0 = bar_cx
+                fill_x1 = int(bar_cx + half_w * pct_ratio)
+            else:
+                fill_x0 = int(bar_cx + half_w * pct_ratio)
+                fill_x1 = bar_cx
+            if fill_x1 > fill_x0:
+                draw.rectangle(
+                    [(fill_x0, bar_y0), (fill_x1, bar_y1)],
+                    fill=col_rgb,
+                )
+            # 目盛り数値 (左端 -max、中央 0、右端 +max)
+            f_small = _get_font(12, mono=True)
+            draw.text(
+                (bar_x0, bar_y1 + 2),
+                f"-{max_pct:.0f}%", font=f_small, fill=_THEME["fg_dim"],
+            )
+            draw.text(
+                (bar_cx - 8, bar_y1 + 2),
+                "0", font=f_small, fill=_THEME["fg_dim"],
+            )
+            tw, _ = _pil_text_size(draw, f"+{max_pct:.0f}%", f_small)
+            draw.text(
+                (bar_x1 - tw, bar_y1 + 2),
+                f"+{max_pct:.0f}%", font=f_small, fill=_THEME["fg_dim"],
+            )
+            # 差分値のテキスト
+            diff_str = f"{diff_pct:+.1f} %"
+            f_diff = _get_font(17, mono=True)
+            dw, _ = _pil_text_size(draw, diff_str, f_diff)
+            draw.text(
+                (bar_cx - dw / 2, bar_y1 + 18),
+                diff_str, font=f_diff, fill=col_rgb,
+            )
+            y = bar_y1 + 44
 
         elif tag == "radar":
             # 現在位置に正方形エリアでレーダーを描画

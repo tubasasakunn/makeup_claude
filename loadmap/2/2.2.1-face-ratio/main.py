@@ -40,6 +40,7 @@ from shared.facemesh import FaceMesh
 from shared.face_metrics import (
     LM,
     compose_report,
+    draw_dashed_line,
     draw_line_outlined,
     draw_pil_pill,
     draw_pil_text,
@@ -174,28 +175,40 @@ def analyze(fm: FaceMesh) -> FaceRatioResult:
 
 
 # ==============================================================
-# 可視化 (UI/UX 改善版: レポートパネル + annotate 分離)
+# 可視化 (視覚比較版: 数字ではなく比率を図示)
 # ==============================================================
-C_H = (80, 220, 255)     # 縦軸 アンバー
+C_H = (80, 220, 255)     # 縦軸 アンバー (あなたの顔)
 C_W = (255, 200, 80)     # 横軸 シアン
-C_G = (140, 255, 160)    # 理想比参照線 グリーン
-C_E = (180, 180, 255)    # 補正 (extended) ピンク淡
 
+# 理想比の色 (差分ライン用)
 RATIO_JP = {
-    "golden": "黄金比 1.618",
-    "silver": "白銀比 1.414",
-    "japanese": "日本人 1.460",
+    "golden": "黄金比",
+    "silver": "白銀比",
+    "japanese": "日本人",
+}
+RATIO_VALUE = {
+    "golden": 1.618,
+    "silver": 1.414,
+    "japanese": 1.460,
 }
 RATIO_COLOR = {
-    "golden": (80, 220, 255),
-    "silver": (180, 220, 90),
-    "japanese": (140, 255, 160),
+    "golden": (120, 180, 255),   # 金色寄りのオレンジ
+    "silver": (220, 200, 180),   # 銀色寄りの薄ブルー
+    "japanese": (140, 255, 160), # グリーン
+}
+RATIO_IMPRESSION = {
+    "golden": "Sharp / Cool",
+    "silver": "Stable / Friendly",
+    "japanese": "Modern Balance",
 }
 
 
 def annotate_face(image: np.ndarray, fm: FaceMesh, r: FaceRatioResult,
                   scale: float = 1.0) -> np.ndarray:
-    """顔画像に縦横寸法と理想比率を重ねる"""
+    """顔画像に実測の縦横線 + 理想比の参照破線を重ねる
+
+    数字を減らし、「あごがどこに来れば黄金比か」を視覚的に示す。
+    """
     if scale != 1.0:
         img = cv2.resize(
             image, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC,
@@ -212,48 +225,62 @@ def annotate_face(image: np.ndarray, fm: FaceMesh, r: FaceRatioResult,
     p_tr = S(fm.landmarks_px[LM.TEMPLE_R])
     p_tl = S(fm.landmarks_px[LM.TEMPLE_L])
 
-    # 補正した生え際 (scale 済み)
-    ext_raw = r.face_height_px - r.face_height_px_raw  # original px
-    ext = ext_raw * scale
-    # 方向 (上向き)
-    dy_top_chin = (p_top[1] - p_chin[1])
-    ext_len = abs(dy_top_chin) if abs(dy_top_chin) > 1e-3 else 1.0
-    dy_unit = dy_top_chin / ext_len
-    p_top_ext = (p_top[0], p_top[1] + dy_unit * ext)
+    # 補正した生え際 (scale 済み) = face_height_ext の上端
+    ext_raw_px = r.face_height_px - r.face_height_px_raw
+    dy_top_chin = p_top[1] - p_chin[1]
+    ext_len_ref = abs(dy_top_chin) if abs(dy_top_chin) > 1e-3 else 1.0
+    dy_unit = dy_top_chin / ext_len_ref
+    p_top_ext = (p_top[0], p_top[1] + dy_unit * ext_raw_px * scale)
 
     lw = max(2, int(2 * scale))
 
-    # 縦軸 (補正前 → 補正後は破線風で)
-    draw_line_outlined(img, p_top, p_chin, C_H, thickness=lw)
-    draw_line_outlined(img, p_top_ext, p_top, C_E, thickness=lw)
-
-    # 横軸
+    # ---- あなたの顔の縦横軸 (実線) ----
+    draw_line_outlined(img, p_top_ext, p_chin, C_H, thickness=lw)
     draw_line_outlined(img, p_tr, p_tl, C_W, thickness=lw)
-
-    for pt, col in [(p_top, C_H), (p_top_ext, C_E), (p_chin, C_H),
+    for pt, col in [(p_top_ext, C_H), (p_chin, C_H),
                     (p_tr, C_W), (p_tl, C_W)]:
         draw_point_outlined(img, pt, col, r=max(3, int(4 * scale)))
 
-    # ---- 寸法ラベル ----
-    label_bg = (20, 20, 25)
-    label_size = max(16, int(18 * scale))
+    # ---- 理想比の参照線 (破線) ----
+    # 横幅を固定し、縦幅 = 横幅 * ideal_ratio になる位置にあごが来るべき
+    # あごの位置を水平破線で引く (左右にはみ出し気味で)
+    cx_face = (p_tr[0] + p_tl[0]) / 2
+    face_w_scaled = abs(p_tl[0] - p_tr[0])
+    line_len = face_w_scaled * 1.15  # 少しはみ出し
 
-    draw_pil_text(
-        img, f"縦 {r.face_height_px:.0f}",
-        (p_chin[0] + 14, p_chin[1] - 12),
-        color=C_H, size=label_size, bg=label_bg, bg_alpha=0.78, bg_pad=5,
+    for name, ratio in RATIO_VALUE.items():
+        ideal_h = face_w_scaled * ratio  # 補正後の縦幅 = w * ratio
+        ideal_chin_y = p_top_ext[1] + ideal_h  # top_ext から下に
+        col = RATIO_COLOR[name]
+        draw_dashed_line(
+            img,
+            (cx_face - line_len / 2, ideal_chin_y),
+            (cx_face + line_len / 2, ideal_chin_y),
+            col, thickness=max(2, int(2 * scale)),
+            dash_len=int(10 * scale), gap_len=int(6 * scale),
+        )
+        # ラベル (ライン右端)
+        label_size = max(13, int(14 * scale))
+        draw_pil_text(
+            img,
+            f"{RATIO_JP[name]} {ratio}",
+            (cx_face + line_len / 2 + 4, ideal_chin_y - 10),
+            color=col, size=label_size,
+            bg=(20, 20, 25), bg_alpha=0.78, bg_pad=4,
+        )
+
+    # あなたの実際のあご位置を強調 (白いマーカー線)
+    draw_line_outlined(
+        img,
+        (p_chin[0] - line_len / 2 + face_w_scaled / 2, p_chin[1]),
+        (p_chin[0] + line_len / 2 - face_w_scaled / 2, p_chin[1]),
+        (255, 255, 255), thickness=max(1, int(1 * scale)),
     )
     draw_pil_text(
-        img, f"横 {r.face_width_px:.0f}",
-        (max(p_tr[0], p_tl[0]) + 12, (p_tr[1] + p_tl[1]) / 2 - 12),
-        color=C_W, size=label_size, bg=label_bg, bg_alpha=0.78, bg_pad=5,
-    )
-    # aspect の値
-    draw_pil_text(
-        img, f"aspect {r.aspect:.2f}",
-        (p_chin[0] + 14, p_chin[1] + 16),
-        color=(230, 230, 235), size=max(14, int(15 * scale)),
-        bg=label_bg, bg_alpha=0.78, bg_pad=5,
+        img, "あご",
+        (cx_face - line_len / 2 - int(60 * scale), p_chin[1] - 10),
+        color=(255, 255, 255), size=max(13, int(14 * scale)),
+        bg=(20, 20, 25), bg_alpha=0.78, bg_pad=4,
     )
 
     # ---- 左上ピル: closest ratio ----
@@ -266,86 +293,43 @@ def annotate_face(image: np.ndarray, fm: FaceMesh, r: FaceRatioResult,
         pad_x=18, pad_y=10, radius=22,
     )
 
-    # ---- 右上凡例 ----
-    legend_items = [
-        ("raw top", C_H),
-        ("hairline +25%", C_E),
-        ("横幅", C_W),
-    ]
-    legend_font = max(14, int(15 * scale))
-    sw_w = int(18 * scale)
-    sw_h = int(14 * scale)
-    row_h = int(26 * scale)
-    lx = w - int(170 * scale)
-    ly = int(20 * scale)
-    cv2.rectangle(
-        img, (lx - 8, ly - 6),
-        (w - 14, ly + row_h * len(legend_items) + 4),
-        (0, 0, 0), -1,
-    )
-    for i, (name, col) in enumerate(legend_items):
-        y_item = ly + i * row_h
-        cv2.rectangle(
-            img, (lx, y_item + 4), (lx + sw_w, y_item + 4 + sw_h), col, -1,
-        )
-        draw_pil_text(
-            img, name, (lx + sw_w + 8, y_item),
-            color=(235, 235, 240), size=legend_font,
-        )
-
     return img
 
 
 def build_panel(r: FaceRatioResult, width: int, height: int) -> np.ndarray:
+    """数字の羅列ではなく、比率を「四角形で並べて比較」するパネル"""
     label_color = RATIO_COLOR.get(r.closest_ratio, (255, 255, 255))
 
-    # 理想比の正規化スコア (1 - 相対ずれ)
-    ideal_scores = {k: max(0.0, 1.0 - loss * 20) for k, loss in r.losses.items()}
+    # あなたの比率色 (ハイライト = 最も近い理想の色)
+    you_color = label_color
+
+    # 4 つの四角 (あなた + 3 つの理想)
+    compare_items = [
+        ("あなた", r.aspect, f"{r.aspect:.2f}", you_color),
+        ("黄金比", RATIO_VALUE["golden"], "1.62", RATIO_COLOR["golden"]),
+        ("白銀比", RATIO_VALUE["silver"], "1.41", RATIO_COLOR["silver"]),
+        ("日本人", RATIO_VALUE["japanese"], "1.46", RATIO_COLOR["japanese"]),
+    ]
+
+    # 最も近い理想に対する差分 (% 単位、正 = あなたの方が縦長)
+    closest_ratio_val = RATIO_VALUE[r.closest_ratio]
+    diff_vs_closest = (r.aspect - closest_ratio_val) / closest_ratio_val * 100
 
     spec = [
         ("title", "2.2.1  縦横バランス", (230, 230, 230)),
-        ("subtitle", "Face Aspect vs Ideal Ratios"),
+        ("subtitle", "Your face ratio vs ideal ratios"),
         ("divider",),
         ("spacer", 4),
-        ("section", "判定結果"),
-        ("big", r.closest_ratio.upper(), label_color),
-        ("text", RATIO_JP.get(r.closest_ratio, "") + "  →  " + r.impression,
-            (210, 210, 215)),
-        ("spacer", 6),
-        ("section", "計測値"),
-        ("kv", "縦 (補正後)",  f"{r.face_height_px:.0f} px"),
-        ("kv", "横 (こめかみ)", f"{r.face_width_px:.0f} px"),
-        ("kv", "aspect (raw)", f"{r.aspect_raw:.3f}"),
-        ("kv", "aspect (ext)", f"{r.aspect:.3f}", label_color),
-    ]
-
-    if r.face_height_cm > 0:
-        kogao_color = (150, 255, 180) if r.kogao_score >= 85 else (230, 230, 235)
-        spec += [
-            ("spacer", 6),
-            ("section", "実寸換算 (虹彩 11.7mm 基準)"),
-            ("kv", "縦幅",        f"{r.face_height_cm:.1f} cm"),
-            ("kv", "横幅",        f"{r.face_width_cm:.1f} cm"),
-            ("kv", "小顔スコア",  f"{r.kogao_score:.0f} / 100", kogao_color),
-            ("kv", "",            f"[{r.kogao_label}]", kogao_color),
-        ]
-
-    spec += [
+        ("section", "最も近い理想"),
+        ("big", RATIO_JP[r.closest_ratio].upper(), label_color),
+        ("text", RATIO_IMPRESSION[r.closest_ratio], (210, 210, 215)),
         ("spacer", 8),
-        ("section", "理想比マッチ度"),
+        ("section", "比率を図示 (幅=1 として縦の長さ)"),
+        ("ratio_compare", compare_items, "あなた"),
+        ("spacer", 4),
+        ("section", f"{RATIO_JP[r.closest_ratio]} との差 (+ = 縦長)"),
+        ("diff_bar", "", diff_vs_closest, 10.0, label_color),
     ]
-
-    # レーダー: 3 つの理想比
-    radar_keys = list(RATIOS.keys())
-    radar_labels = [RATIO_JP[k] for k in radar_keys]
-    radar_vals = [ideal_scores[k] for k in radar_keys]
-    best_idx = radar_keys.index(r.closest_ratio)
-    # min-max 正規化
-    rv_min = min(radar_vals)
-    rv_max = max(radar_vals)
-    rv_range = max(rv_max - rv_min, 1e-6)
-    radar_norm = [0.3 + 0.7 * (v - rv_min) / rv_range for v in radar_vals]
-    spec.append(("radar", radar_labels, radar_norm, best_idx, label_color))
 
     return render_report_panel(spec, width, height)
 
