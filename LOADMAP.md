@@ -185,6 +185,29 @@ python main.py <入力画像> -t arch --color 60 30 20 --intensity 0.8 --zoom -o
 - 頬の黄金比を判定する：小鼻→輪郭の水平線と、黒目真下→輪郭の垂直線の比率（理想は1:2）
 - 全パーツの判定結果を統合した「総合黄金比スコア」を算出する
 
-# 3 化粧選択
-測定した顔から化粧工程を選択し、反映させる
-TODO
+# 3 化粧選択 ✅
+測定した顔から化粧工程を選択し、反映させる。
+
+`loadmap/3-makeup-selection/` に手動ルールベースの MVP を実装:
+
+1. **Evaluator** (`evaluator.py`): 2.1〜2.2.8 の全判定を一括実行し FaceProfile dict を出力
+2. **Selector** (`selector.py`): FaceProfile から MakeupPlan を決定
+   - 骨格タイプで shadow/highlight プリセット + 眉タイプを選定
+     - 卵型   → base HL のみ + straight 眉
+     - 丸型   → marugao HL + marugao-side shadow + arch 眉
+     - 面長   → omonaga HL + omonaga-upper/lower shadow + parallel 眉
+     - 逆三角 → base HL のみ + natural 眉
+     - ベース → marugao HL + marugao-side shadow + corner 眉
+   - 目カテゴリ (Big-Round/Narrow/Balanced) でアイメイク強度を調整
+   - 黄金比スコア (2.2.8) で全体強度倍率を 0.85 / 1.00 / 1.15 に補正
+3. **Applicator** (`applicator.py`): MakeupPlan の steps を 1.x の apply_* 関数に順次渡して適用
+   - base (1.3) → shadow (1.2) → highlight (1.1) → eye (1.4) → eyebrow (1.5) の順
+4. **main.py**: CLI オーケストレーター
+   - 入力画像 → FaceProfile + MakeupPlan + 適用後画像 + JSON レポートを一括出力
+
+### 使い方
+```bash
+cd loadmap/3-makeup-selection
+python main.py ../../imgs/丸顔.png -o results/
+# -> results/丸顔_after.png, 丸顔_compare.png, 丸顔_profile.json
+```
