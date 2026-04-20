@@ -12,11 +12,9 @@
   "highlight": {
     "enabled": true,
     "areas": [
-      "base_t-zone",
-      "base_c-zone",
-      "base_under-eye",
-      "base_megasira",
-      "base_zintyuu"
+      "marugao_t-zone",
+      "marugao_c-zone",
+      "marugao_ago"
     ],
     "color_bgr": [
       255,
@@ -27,8 +25,10 @@
     "blur_scale": 2.0
   },
   "shadow": {
-    "enabled": false,
-    "areas": [],
+    "enabled": true,
+    "areas": [
+      "marugao-side"
+    ],
     "color_bgr": [
       90,
       68,
@@ -45,7 +45,7 @@
         145,
         120
       ],
-      "intensity": 0.35,
+      "intensity": 0.39280626721212264,
       "blur_scale": 0.8,
       "blend": "normal",
       "thickness_scale": 1.0
@@ -112,17 +112,16 @@
   "source": {
     "skeletal_type": "round",
     "skeletal_type_label": "丸型 (縦≈横・頬ふっくら)",
-    "skeletal_scores": {
-      "base": 0.8784475499145648,
-      "round": 0.9995462106920442,
-      "oval": 0.8370882037690566,
-      "inverted_triangle": 0.45046426576401577,
-      "long": 0.6668230599737003
-    },
     "golden_score": 75.1,
-    "golden_label": "A (Good)"
+    "golden_label": "A (Good)",
+    "eye_ideal_ratio_loss": 0.0214,
+    "intensity_scale": 1.0
   },
   "rationale": [
-    "skeletal=round → eyebrow=arch: 丸型は頬のふっくら感を引き締めるため縦ラインを作るアーチ"
+    "R1 skeletal=round → eyebrow=arch: 丸型は頬のふっくら感を引き締めるため縦ラインを作るアーチ",
+    "R2 skeletal=round → highlight=['marugao_t-zone', 'marugao_c-zone', 'marugao_ago']: 丸型は縦方向ハイライト(T+C+顎)で縦長効果",
+    "R3 skeletal=round → shadow=ON ['marugao-side']: 丸型は頬サイドシャドウで小顔効果",
+    "R4 eye.ideal_loss=0.021 → 目の小ささ補正: eyeshadow_base intensity +0.04",
+    "R5 golden_score=75.1 → 標準スコア: 標準の強度 (×1.00)"
   ]
 }

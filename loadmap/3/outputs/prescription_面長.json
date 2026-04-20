@@ -12,11 +12,8 @@
   "highlight": {
     "enabled": true,
     "areas": [
-      "base_t-zone",
-      "base_c-zone",
-      "base_under-eye",
-      "base_megasira",
-      "base_zintyuu"
+      "omonaga_t-zone",
+      "omonaga_c-zone"
     ],
     "color_bgr": [
       255,
@@ -27,8 +24,11 @@
     "blur_scale": 2.0
   },
   "shadow": {
-    "enabled": false,
-    "areas": [],
+    "enabled": true,
+    "areas": [
+      "omonaga-upper",
+      "omonaga-lower"
+    ],
     "color_bgr": [
       90,
       68,
@@ -45,7 +45,7 @@
         145,
         120
       ],
-      "intensity": 0.35,
+      "intensity": 0.37974537373293005,
       "blur_scale": 0.8,
       "blend": "normal",
       "thickness_scale": 1.0
@@ -112,17 +112,16 @@
   "source": {
     "skeletal_type": "long",
     "skeletal_type_label": "面長 (縦>>横)",
-    "skeletal_scores": {
-      "base": 0.3938366499025484,
-      "round": 0.6802373144076862,
-      "oval": 0.6848273144485088,
-      "inverted_triangle": 0.7329786400341202,
-      "long": 0.9999319853131333
-    },
     "golden_score": 74.08,
-    "golden_label": "B (Average)"
+    "golden_label": "B (Average)",
+    "eye_ideal_ratio_loss": 0.0149,
+    "intensity_scale": 1.0
   },
   "rationale": [
-    "skeletal=long → eyebrow=parallel: 面長は縦長を抑えるため水平・太めの平行眉"
+    "R1 skeletal=long → eyebrow=parallel: 面長は縦長を抑えるため水平・太めの平行眉",
+    "R2 skeletal=long → highlight=['omonaga_t-zone', 'omonaga_c-zone']: 面長は狭めのハイライト(T+C)で縦を強調しない",
+    "R3 skeletal=long → shadow=ON ['omonaga-upper', 'omonaga-lower']: 面長は上下シャドウで縦を短く",
+    "R4 eye.ideal_loss=0.015 → 目の小ささ補正: eyeshadow_base intensity +0.03",
+    "R5 golden_score=74.1 → 標準スコア: 標準の強度 (×1.00)"
   ]
 }

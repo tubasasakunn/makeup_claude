@@ -108,25 +108,34 @@ def _info_tile(width: int, height: int, fname: str,
     color = (140, 255, 140) if ok else (90, 90, 255)
     mark = "PASS" if ok else "MISMATCH"
 
+    # ハイライトエリア名を短縮表示 (最後の _ 以降)
+    hl_short = ", ".join(a.split("_")[-1] for a in rx.highlight.areas)
+    sd_short = ", ".join(a.split("-")[-1] for a in rx.shadow.areas) if rx.shadow.enabled else "OFF"
+
+    # enabled な eye エリア
+    eye_on = [n for n in ("eyeshadow_base", "eyeshadow_crease", "eyeliner",
+                          "tear_bag", "lower_outer")
+              if getattr(rx.eye, n).enabled]
+
     lines = [
         (fname, 17, (230, 230, 235)),
         (f"骨格: {rx.source['skeletal_type']} (期待: {expected})", 14, color),
-        (f"黄金比: {rx.source['golden_score']:.1f} "
-         f"{rx.source['golden_label']}", 13, (200, 200, 200)),
-        ("―" * 18, 11, (80, 80, 90)),
+        (f"黄金比: {rx.source['golden_score']:.1f} {rx.source['golden_label']}", 13, (200, 200, 200)),
+        (f"目ズレ: {rx.source.get('eye_ideal_ratio_loss', 0):.3f}  "
+         f"スケール: ×{rx.source.get('intensity_scale', 1.0):.2f}", 13, (200, 200, 200)),
+        ("―" * 22, 11, (80, 80, 90)),
         ("処方:", 14, (220, 220, 230)),
-        (f"  base: {'ON' if rx.base.enabled else 'OFF'} "
-         f"int={rx.base.intensity:.2f}", 12, (200, 230, 255)),
-        (f"  highlight: {'ON' if rx.highlight.enabled else 'OFF'} "
-         f"{len(rx.highlight.areas)}areas", 12, (200, 230, 255)),
-        (f"  shadow: {'ON' if rx.shadow.enabled else 'OFF'}", 12, (200, 230, 255)),
-        (f"  eye: 5 areas (all ON)", 12, (200, 230, 255)),
-        (f"  eyebrow: {rx.eyebrow.brow_type}", 13, (200, 255, 200)),
+        (f"  base  int={rx.base.intensity:.2f}", 12, (200, 230, 255)),
+        (f"  HL ({len(rx.highlight.areas)}): {hl_short}", 12, (200, 230, 255)),
+        (f"  Shadow: {sd_short}", 12, (255, 220, 200) if rx.shadow.enabled else (150, 150, 160)),
+        (f"  eye ON: {', '.join(eye_on)}", 11, (200, 230, 255)),
+        (f"  eye_base int={rx.eye.eyeshadow_base.intensity:.2f}", 12, (200, 230, 255)),
+        (f"  eyebrow: {rx.eyebrow.brow_type}", 14, (200, 255, 200)),
     ]
-    y = 14
+    y = 10
     for text, size, col in lines:
         draw_pil_text(tile, text, (12, y), color=col, size=size, outline=1)
-        y += size + 7
+        y += size + 6
 
     draw_pil_text(tile, mark, (12, height - 34), color=color,
                   size=22, outline=2)

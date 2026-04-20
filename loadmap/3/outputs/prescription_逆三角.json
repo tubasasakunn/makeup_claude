@@ -45,7 +45,7 @@
         145,
         120
       ],
-      "intensity": 0.35,
+      "intensity": 0.4267698253479193,
       "blur_scale": 0.8,
       "blend": "normal",
       "thickness_scale": 1.0
@@ -112,17 +112,16 @@
   "source": {
     "skeletal_type": "inverted_triangle",
     "skeletal_type_label": "逆三角形 (おでこ広・あご先シュッ)",
-    "skeletal_scores": {
-      "base": 0.2468741276255452,
-      "round": 0.45899761885864054,
-      "oval": 0.7098430432424119,
-      "inverted_triangle": 0.9997206209938684,
-      "long": 0.7332736607598783
-    },
     "golden_score": 72.96,
-    "golden_label": "B (Average)"
+    "golden_label": "B (Average)",
+    "eye_ideal_ratio_loss": 0.0384,
+    "intensity_scale": 1.0
   },
   "rationale": [
-    "skeletal=inverted_triangle → eyebrow=straight: 逆三角はシャープな印象を和らげるためストレート眉"
+    "R1 skeletal=inverted_triangle → eyebrow=straight: 逆三角はシャープな印象を和らげるためストレート眉",
+    "R2 skeletal=inverted_triangle → highlight=['base_t-zone', 'base_c-zone', 'base_under-eye', 'base_megasira', 'base_zintyuu']: 逆三角は標準のハイライト配置(広いおでこを強調しない)",
+    "R3 skeletal=inverted_triangle → shadow=OFF: 逆三角はシャドウ不要(狭い顎を強調しない)",
+    "R4 eye.ideal_loss=0.038 → 目の小ささ補正: eyeshadow_base intensity +0.08",
+    "R5 golden_score=73.0 → 標準スコア: 標準の強度 (×1.00)"
   ]
 }

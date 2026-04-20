@@ -45,7 +45,7 @@
         145,
         120
       ],
-      "intensity": 0.35,
+      "intensity": 0.4307485129546398,
       "blur_scale": 0.8,
       "blend": "normal",
       "thickness_scale": 1.0
@@ -112,17 +112,16 @@
   "source": {
     "skeletal_type": "oval",
     "skeletal_type_label": "卵型 (縦1.5:横1・なめらかな輪郭)",
-    "skeletal_scores": {
-      "base": 0.6478929777713689,
-      "round": 0.8509542724888617,
-      "oval": 0.9998353563062845,
-      "inverted_triangle": 0.7140211800866778,
-      "long": 0.6858178609635095
-    },
     "golden_score": 74.47,
-    "golden_label": "B (Average)"
+    "golden_label": "B (Average)",
+    "eye_ideal_ratio_loss": 0.0404,
+    "intensity_scale": 1.0
   },
   "rationale": [
-    "skeletal=oval → eyebrow=natural: 卵型はバランス型。標準の緩やかカーブで自然に仕上げる"
+    "R1 skeletal=oval → eyebrow=natural: 卵型はバランス型。標準の緩やかカーブで自然に仕上げる",
+    "R2 skeletal=oval → highlight=['base_t-zone', 'base_c-zone', 'base_under-eye', 'base_megasira', 'base_zintyuu']: 卵型は標準のハイライト配置",
+    "R3 skeletal=oval → shadow=OFF: 卵型はシャドウ不要",
+    "R4 eye.ideal_loss=0.040 → 目の小ささ補正: eyeshadow_base intensity +0.08",
+    "R5 golden_score=74.5 → 標準スコア: 標準の強度 (×1.00)"
   ]
 }
