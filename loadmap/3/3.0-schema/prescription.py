@@ -61,15 +61,20 @@ class EyeAreaRx:
 
 @dataclass
 class EyeRx:
-    """1.4 目: 5エリアそれぞれを個別に指定"""
+    """1.4 目: 5エリアそれぞれを個別に指定
+
+    eyeliner と tear_bag は現状不要のため既定でオフ。
+    """
     eyeshadow_base: EyeAreaRx = field(default_factory=lambda: EyeAreaRx(
         color_rgb=(190, 145, 120), intensity=0.35, blur_scale=0.8, blend="normal"))
     eyeshadow_crease: EyeAreaRx = field(default_factory=lambda: EyeAreaRx(
         color_rgb=(160, 110, 85), intensity=0.25, blur_scale=0.5, blend="normal"))
     eyeliner: EyeAreaRx = field(default_factory=lambda: EyeAreaRx(
+        enabled=False,
         color_rgb=(35, 20, 10), intensity=0.55, blur_scale=0.3, blend="normal",
         thickness_scale=0.2))
     tear_bag: EyeAreaRx = field(default_factory=lambda: EyeAreaRx(
+        enabled=False,
         color_rgb=(255, 230, 215), intensity=0.12, blur_scale=0.5, blend="additive"))
     lower_outer: EyeAreaRx = field(default_factory=lambda: EyeAreaRx(
         color_rgb=(180, 100, 85), intensity=0.18, blur_scale=0.3, blend="normal"))

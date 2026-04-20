@@ -63,7 +63,7 @@
       "thickness_scale": 1.0
     },
     "eyeliner": {
-      "enabled": true,
+      "enabled": false,
       "color_rgb": [
         35,
         20,
@@ -75,7 +75,7 @@
       "thickness_scale": 0.2
     },
     "tear_bag": {
-      "enabled": true,
+      "enabled": false,
       "color_rgb": [
         255,
         230,
