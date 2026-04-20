@@ -1,0 +1,128 @@
+{
+  "base": {
+    "enabled": true,
+    "color_bgr": [
+      170,
+      200,
+      235
+    ],
+    "intensity": 0.3,
+    "blur_scale": 2.5
+  },
+  "highlight": {
+    "enabled": true,
+    "areas": [
+      "base_t-zone",
+      "base_c-zone",
+      "base_under-eye",
+      "base_megasira",
+      "base_zintyuu"
+    ],
+    "color_bgr": [
+      255,
+      255,
+      255
+    ],
+    "intensity": 0.12,
+    "blur_scale": 2.0
+  },
+  "shadow": {
+    "enabled": false,
+    "areas": [],
+    "color_bgr": [
+      90,
+      68,
+      50
+    ],
+    "intensity": 0.25,
+    "blur_scale": 2.5
+  },
+  "eye": {
+    "eyeshadow_base": {
+      "enabled": true,
+      "color_rgb": [
+        190,
+        145,
+        120
+      ],
+      "intensity": 0.35,
+      "blur_scale": 0.8,
+      "blend": "normal",
+      "thickness_scale": 1.0
+    },
+    "eyeshadow_crease": {
+      "enabled": true,
+      "color_rgb": [
+        160,
+        110,
+        85
+      ],
+      "intensity": 0.25,
+      "blur_scale": 0.5,
+      "blend": "normal",
+      "thickness_scale": 1.0
+    },
+    "eyeliner": {
+      "enabled": true,
+      "color_rgb": [
+        35,
+        20,
+        10
+      ],
+      "intensity": 0.55,
+      "blur_scale": 0.3,
+      "blend": "normal",
+      "thickness_scale": 0.2
+    },
+    "tear_bag": {
+      "enabled": true,
+      "color_rgb": [
+        255,
+        230,
+        215
+      ],
+      "intensity": 0.12,
+      "blur_scale": 0.5,
+      "blend": "additive",
+      "thickness_scale": 1.0
+    },
+    "lower_outer": {
+      "enabled": true,
+      "color_rgb": [
+        180,
+        100,
+        85
+      ],
+      "intensity": 0.18,
+      "blur_scale": 0.3,
+      "blend": "normal",
+      "thickness_scale": 1.0
+    }
+  },
+  "eyebrow": {
+    "enabled": true,
+    "brow_type": "parallel",
+    "color_rgb": [
+      85,
+      60,
+      45
+    ],
+    "intensity": 0.75
+  },
+  "source": {
+    "skeletal_type": "long",
+    "skeletal_type_label": "面長 (縦>>横)",
+    "skeletal_scores": {
+      "base": 0.3938366499025484,
+      "round": 0.6802373144076862,
+      "oval": 0.6848273144485088,
+      "inverted_triangle": 0.7329786400341202,
+      "long": 0.9999319853131333
+    },
+    "golden_score": 74.08,
+    "golden_label": "B (Average)"
+  },
+  "rationale": [
+    "skeletal=long → eyebrow=parallel: 面長は縦長を抑えるため水平・太めの平行眉"
+  ]
+}

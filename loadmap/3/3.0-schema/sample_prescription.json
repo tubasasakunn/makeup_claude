@@ -1,0 +1,116 @@
+{
+  "base": {
+    "enabled": true,
+    "color_bgr": [
+      170,
+      200,
+      235
+    ],
+    "intensity": 0.3,
+    "blur_scale": 2.5
+  },
+  "highlight": {
+    "enabled": true,
+    "areas": [
+      "base_t-zone",
+      "base_c-zone",
+      "base_under-eye",
+      "base_megasira",
+      "base_zintyuu"
+    ],
+    "color_bgr": [
+      255,
+      255,
+      255
+    ],
+    "intensity": 0.12,
+    "blur_scale": 2.0
+  },
+  "shadow": {
+    "enabled": false,
+    "areas": [],
+    "color_bgr": [
+      90,
+      68,
+      50
+    ],
+    "intensity": 0.25,
+    "blur_scale": 2.5
+  },
+  "eye": {
+    "eyeshadow_base": {
+      "enabled": true,
+      "color_rgb": [
+        190,
+        145,
+        120
+      ],
+      "intensity": 0.35,
+      "blur_scale": 0.8,
+      "blend": "normal",
+      "thickness_scale": 1.0
+    },
+    "eyeshadow_crease": {
+      "enabled": true,
+      "color_rgb": [
+        160,
+        110,
+        85
+      ],
+      "intensity": 0.25,
+      "blur_scale": 0.5,
+      "blend": "normal",
+      "thickness_scale": 1.0
+    },
+    "eyeliner": {
+      "enabled": true,
+      "color_rgb": [
+        35,
+        20,
+        10
+      ],
+      "intensity": 0.55,
+      "blur_scale": 0.3,
+      "blend": "normal",
+      "thickness_scale": 0.2
+    },
+    "tear_bag": {
+      "enabled": true,
+      "color_rgb": [
+        255,
+        230,
+        215
+      ],
+      "intensity": 0.12,
+      "blur_scale": 0.5,
+      "blend": "additive",
+      "thickness_scale": 1.0
+    },
+    "lower_outer": {
+      "enabled": true,
+      "color_rgb": [
+        180,
+        100,
+        85
+      ],
+      "intensity": 0.18,
+      "blur_scale": 0.3,
+      "blend": "normal",
+      "thickness_scale": 1.0
+    }
+  },
+  "eyebrow": {
+    "enabled": true,
+    "brow_type": "natural",
+    "color_rgb": [
+      85,
+      60,
+      45
+    ],
+    "intensity": 0.75
+  },
+  "source": {},
+  "rationale": [
+    "default prescription (no rules applied)"
+  ]
+}

@@ -1,0 +1,128 @@
+{
+  "base": {
+    "enabled": true,
+    "color_bgr": [
+      170,
+      200,
+      235
+    ],
+    "intensity": 0.3,
+    "blur_scale": 2.5
+  },
+  "highlight": {
+    "enabled": true,
+    "areas": [
+      "base_t-zone",
+      "base_c-zone",
+      "base_under-eye",
+      "base_megasira",
+      "base_zintyuu"
+    ],
+    "color_bgr": [
+      255,
+      255,
+      255
+    ],
+    "intensity": 0.12,
+    "blur_scale": 2.0
+  },
+  "shadow": {
+    "enabled": false,
+    "areas": [],
+    "color_bgr": [
+      90,
+      68,
+      50
+    ],
+    "intensity": 0.25,
+    "blur_scale": 2.5
+  },
+  "eye": {
+    "eyeshadow_base": {
+      "enabled": true,
+      "color_rgb": [
+        190,
+        145,
+        120
+      ],
+      "intensity": 0.35,
+      "blur_scale": 0.8,
+      "blend": "normal",
+      "thickness_scale": 1.0
+    },
+    "eyeshadow_crease": {
+      "enabled": true,
+      "color_rgb": [
+        160,
+        110,
+        85
+      ],
+      "intensity": 0.25,
+      "blur_scale": 0.5,
+      "blend": "normal",
+      "thickness_scale": 1.0
+    },
+    "eyeliner": {
+      "enabled": true,
+      "color_rgb": [
+        35,
+        20,
+        10
+      ],
+      "intensity": 0.55,
+      "blur_scale": 0.3,
+      "blend": "normal",
+      "thickness_scale": 0.2
+    },
+    "tear_bag": {
+      "enabled": true,
+      "color_rgb": [
+        255,
+        230,
+        215
+      ],
+      "intensity": 0.12,
+      "blur_scale": 0.5,
+      "blend": "additive",
+      "thickness_scale": 1.0
+    },
+    "lower_outer": {
+      "enabled": true,
+      "color_rgb": [
+        180,
+        100,
+        85
+      ],
+      "intensity": 0.18,
+      "blur_scale": 0.3,
+      "blend": "normal",
+      "thickness_scale": 1.0
+    }
+  },
+  "eyebrow": {
+    "enabled": true,
+    "brow_type": "natural",
+    "color_rgb": [
+      85,
+      60,
+      45
+    ],
+    "intensity": 0.75
+  },
+  "source": {
+    "skeletal_type": "base",
+    "skeletal_type_label": "ベース型 (エラ張り・あご平ら)",
+    "skeletal_scores": {
+      "base": 0.9990730181925989,
+      "round": 0.8590064852405611,
+      "oval": 0.6293739689721194,
+      "inverted_triangle": 0.23964501188725235,
+      "long": 0.3816574706933283
+    },
+    "golden_score": 75.93,
+    "golden_label": "A (Good)"
+  },
+  "rationale": [
+    "skeletal=base → eyebrow=natural: ベース型は角張りを和らげるため緩やかな自然カーブ"
+  ]
+}
