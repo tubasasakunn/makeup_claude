@@ -1,0 +1,127 @@
+{
+  "base": {
+    "enabled": true,
+    "color_bgr": [
+      170,
+      200,
+      235
+    ],
+    "intensity": 0.3,
+    "blur_scale": 2.5
+  },
+  "highlight": {
+    "enabled": true,
+    "areas": [
+      "omonaga_t-zone",
+      "omonaga_c-zone"
+    ],
+    "color_bgr": [
+      255,
+      255,
+      255
+    ],
+    "intensity": 0.12,
+    "blur_scale": 2.0
+  },
+  "shadow": {
+    "enabled": true,
+    "areas": [
+      "omonaga-upper",
+      "omonaga-lower"
+    ],
+    "color_bgr": [
+      90,
+      68,
+      50
+    ],
+    "intensity": 0.25,
+    "blur_scale": 2.5
+  },
+  "eye": {
+    "eyeshadow_base": {
+      "enabled": true,
+      "color_rgb": [
+        190,
+        145,
+        120
+      ],
+      "intensity": 0.37974537373293005,
+      "blur_scale": 0.8,
+      "blend": "normal",
+      "thickness_scale": 1.0
+    },
+    "eyeshadow_crease": {
+      "enabled": true,
+      "color_rgb": [
+        160,
+        110,
+        85
+      ],
+      "intensity": 0.25,
+      "blur_scale": 0.5,
+      "blend": "normal",
+      "thickness_scale": 1.0
+    },
+    "eyeliner": {
+      "enabled": false,
+      "color_rgb": [
+        35,
+        20,
+        10
+      ],
+      "intensity": 0.55,
+      "blur_scale": 0.3,
+      "blend": "normal",
+      "thickness_scale": 0.2
+    },
+    "tear_bag": {
+      "enabled": false,
+      "color_rgb": [
+        255,
+        230,
+        215
+      ],
+      "intensity": 0.12,
+      "blur_scale": 0.5,
+      "blend": "additive",
+      "thickness_scale": 1.0
+    },
+    "lower_outer": {
+      "enabled": true,
+      "color_rgb": [
+        180,
+        100,
+        85
+      ],
+      "intensity": 0.18,
+      "blur_scale": 0.3,
+      "blend": "normal",
+      "thickness_scale": 1.0
+    }
+  },
+  "eyebrow": {
+    "enabled": true,
+    "brow_type": "parallel",
+    "color_rgb": [
+      85,
+      60,
+      45
+    ],
+    "intensity": 0.75
+  },
+  "source": {
+    "skeletal_type": "long",
+    "skeletal_type_label": "面長 (縦>>横)",
+    "golden_score": 74.08,
+    "golden_label": "B (Average)",
+    "eye_ideal_ratio_loss": 0.0149,
+    "intensity_scale": 1.0
+  },
+  "rationale": [
+    "R1 skeletal=long → eyebrow=parallel: 面長は縦長を抑えるため水平・太めの平行眉",
+    "R2 skeletal=long → highlight=['omonaga_t-zone', 'omonaga_c-zone']: 面長は狭めのハイライト(T+C)で縦を強調しない",
+    "R3 skeletal=long → shadow=ON ['omonaga-upper', 'omonaga-lower']: 面長は上下シャドウで縦を短く",
+    "R4 eye.ideal_loss=0.015 → 目の小ささ補正: eyeshadow_base intensity +0.03",
+    "R5 golden_score=74.1 → 標準スコア: 標準の強度 (×1.00)"
+  ]
+}
